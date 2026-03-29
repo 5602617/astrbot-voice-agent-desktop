@@ -180,6 +180,12 @@ class VoiceConfig:
 
     enable_tts: bool = True
     auto_play_voice: bool = False
+    # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）
+    auto_start_local_asr: bool = False
+    # 本地 ASR 适配器，格式: module.path:ClassName
+    local_asr_adapter: str = ""
+    # 本地 TTS 适配器，格式: module.path:ClassName
+    local_tts_adapter: str = ""
     # TTS 文字语音同时输出（对应 AstrBot 的 provider_tts_settings.dual_output）
     dual_output: bool = False
 

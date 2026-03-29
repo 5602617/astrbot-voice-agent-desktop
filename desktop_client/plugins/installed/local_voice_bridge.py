@@ -50,6 +50,12 @@ class LocalVoiceBridgePlugin(IPlugin):
         self.save_config()
         super().on_unload()
 
+    def on_enable(self) -> bool:
+        import asyncio
+
+        asyncio.create_task(self._runtime.start())
+        return True
+
     def on_disable(self) -> None:
         self._runtime.shutdown()
 

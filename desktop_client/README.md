@@ -144,3 +144,33 @@ class DesktopState:
 ## 许可证
 
 MIT License
+## 本地 ASR/TTS 模型接入（ASR -> Cloud AstrBot -> Local TTS）
+
+你已经有本地 ASR/TTS 模型时，推荐按下面方式接入：
+
+1. 复制并修改模板：`desktop_client/voice_models/custom_local_models.py`
+2. 在配置文件 `config.json` 的 `voice` 段设置适配器路径（`module:ClassName`）
+3. 可选开启 `auto_start_local_asr`，让客户端启动后自动跑本地 ASR
+
+示例配置：
+
+```json
+{
+  "voice": {
+    "enable_tts": true,
+    "auto_start_local_asr": true,
+    "local_asr_adapter": "desktop_client.voice_models.custom_local_models:MyASRAdapter",
+    "local_tts_adapter": "desktop_client.voice_models.custom_local_models:MyTTSAdapter"
+  }
+}
+```
+
+接口定义见：`desktop_client/services/voice_adapter_base.py`。
+
+- `BaseASRAdapter.start(on_text)`：把识别结果通过 `on_text(text)` 回调给客户端
+- `BaseTTSAdapter.speak(text)`：接收最终回复文本并本地播放
+
+运行时：
+- 本地 ASR 文本 -> 桌面端发送到 Cloud AstrBot
+- Cloud AstrBot 返回最终文本 -> 本地 TTS 播放（若启用）
+- 即使本地 TTS 失败，也不会影响文本回复显示
