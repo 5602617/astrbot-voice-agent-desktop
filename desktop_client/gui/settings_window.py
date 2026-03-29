@@ -685,6 +685,9 @@ class SettingsWindow(QWidget):
         # 语音设置
         voice_section = SettingsSection("语音设置")
 
+        self._enable_tts = QCheckBox("启用本地 TTS 播放（文本仍会正常显示）")
+        voice_section.add_widget(self._enable_tts)
+
         self._auto_play_voice = QCheckBox("收到语音消息时自动播放")
         voice_section.add_widget(self._auto_play_voice)
 
@@ -2032,6 +2035,7 @@ class SettingsWindow(QWidget):
 
         # 语音设置
         if hasattr(self.config, "voice"):
+            self._enable_tts.setChecked(self.config.voice.enable_tts)
             self._auto_play_voice.setChecked(self.config.voice.auto_play_voice)
 
         # 免打扰模式
@@ -2418,6 +2422,7 @@ class SettingsWindow(QWidget):
                 "do_not_disturb": self._do_not_disturb.isChecked(),
             },
             "voice": {
+                "enable_tts": self._enable_tts.isChecked(),
                 "auto_play_voice": self._auto_play_voice.isChecked(),
             },
             "proactive": {
@@ -2513,6 +2518,7 @@ class SettingsWindow(QWidget):
             ]
 
             # 语音
+            self.config.voice.enable_tts = settings["voice"]["enable_tts"]
             self.config.voice.auto_play_voice = settings["voice"]["auto_play_voice"]
 
             # 主动对话

@@ -37,6 +37,8 @@ from .handlers import (
 )
 from .controllers import SettingsController
 from .logger import get_logger
+from .plugins.manager import get_plugin_manager
+from .plugins.hooks import HookType, HookContext
 
 
 # 获取日志器
@@ -96,6 +98,9 @@ class DesktopClientApp(QObject):
 
         # 初始化处理器和控制器
         self._init_handlers()
+        self._plugin_manager = get_plugin_manager()
+        self._plugin_manager.app_bridge = self._bridge
+        self._plugin_manager.app_config = self.config
 
     def _init_handlers(self):
         """初始化处理器和控制器"""
@@ -134,9 +139,7 @@ class DesktopClientApp(QObject):
         )
 
         # 连接信号
-        self._bridge.message_received.connect(
-            self._message_handler.handle_output_message
-        )
+        self._bridge.message_received.connect(self._on_bridge_message)
         self._bridge.connection_state_changed.connect(self._on_connection_state_changed)
         self._screenshot_handler.proactive_screenshot_completed.connect(
             self._proactive_handler.handle_proactive_screenshot_complete
@@ -231,6 +234,10 @@ class DesktopClientApp(QObject):
 
     async def _startup(self):
         """启动时异步任务"""
+        await self._plugin_manager.start()
+        if self._plugin_manager.get_plugin("local_voice_bridge"):
+            await self._plugin_manager.enable_plugin("local_voice_bridge")
+
         if self.config.server.auto_reconnect:
             # 计算总启动延迟
             startup_delay = self.config.server.startup_delay
@@ -641,11 +648,31 @@ class DesktopClientApp(QObject):
     @asyncSlot(str)
     async def _on_message_sent(self, message: str):
         """处理发送的消息 (Async Slot)"""
+        context = HookContext(
+            hook_type=HookType.PRE_MESSAGE_SEND,
+            data={"message": message, "session_id": self.config.session_id or ""},
+        )
+        context = await self._plugin_manager.dispatch_hook(context)
+        if context.was_aborted():
+            return
+
         await self._bridge.send_input(
             InputMessage(
                 msg_type="text",
-                content=message,
-                session_id=self.config.session_id or "",
+                content=context.get("message", message),
+                session_id=context.get("session_id", self.config.session_id or ""),
+                metadata=context.get("metadata", {}),
+            )
+        )
+
+        await self._plugin_manager.dispatch_hook(
+            HookContext(
+                hook_type=HookType.POST_MESSAGE_SEND,
+                data={
+                    "message": context.get("message", message),
+                    "session_id": context.get("session_id", self.config.session_id or ""),
+                    "success": True,
+                },
             )
         )
 
@@ -790,10 +817,54 @@ class DesktopClientApp(QObject):
         if self._hotkey_manager:
             self._hotkey_manager.cleanup()
 
+        asyncio.ensure_future(self._plugin_manager.stop())
         asyncio.ensure_future(self._bridge.disconnect_server())
 
         if self._app:
             self._app.quit()
+
+    @asyncSlot(object)
+    async def _on_bridge_message(self, message):
+        """在消息处理前后调度插件钩子。"""
+        if message.msg_type in ("text", "end", "error"):
+            pre_context = HookContext(
+                hook_type=HookType.PRE_MESSAGE_RECEIVE,
+                data={
+                    "message": message.content,
+                    "msg_type": message.msg_type,
+                    "streaming": message.streaming,
+                    "metadata": message.metadata,
+                    "session_id": message.session_id,
+                },
+            )
+            pre_context = await self._plugin_manager.dispatch_hook(pre_context)
+            if pre_context.was_aborted():
+                return
+            message.content = pre_context.get("message", message.content)
+
+        self._message_handler.handle_output_message(message)
+
+        await self._plugin_manager.dispatch_hook(
+            HookContext(
+                hook_type=HookType.POST_MESSAGE_RECEIVE,
+                data={
+                    "message": message.content,
+                    "msg_type": message.msg_type,
+                    "streaming": message.streaming,
+                    "metadata": message.metadata,
+                    "session_id": message.session_id,
+                    "displayed": True,
+                },
+            )
+        )
+
+    async def submit_local_asr_text(self, text: str) -> bool:
+        """供本地 ASR 适配器调用：将识别文本交给本地语音桥接插件。"""
+        plugin = self._plugin_manager.get_plugin("local_voice_bridge")
+        if plugin and hasattr(plugin, "submit_asr_text"):
+            return await plugin.submit_asr_text(text, self.config.session_id or "")
+        await self._on_message_sent(text)
+        return True
 
 
 def main():
