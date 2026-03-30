@@ -8,7 +8,7 @@ from typing import Optional
 
 from ..base import BaseTTSProvider
 from ..models import TTSProviderConfig
-from .sovits_tts import SovitsTTSProvider
+from .genie_tts_runtime import GenieTTSRuntime
 
 
 class RuntimeTTSProvider(BaseTTSProvider):
@@ -20,7 +20,7 @@ class RuntimeTTSProvider(BaseTTSProvider):
         self._backend = (config.runtime_backend or 'qt').lower()
         self._qt_speaker = None
         self._pyttsx3 = None
-        self._sovits_provider: BaseTTSProvider | None = None
+        self._genie_provider: BaseTTSProvider | None = None
 
     async def warmup(self) -> None:
         if self._backend == 'qt':
@@ -39,9 +39,9 @@ class RuntimeTTSProvider(BaseTTSProvider):
                 raise RuntimeError('pyttsx3 初始化失败') from exc
         elif self._backend == 'edge_tts':
             self.logger.info('Runtime TTS backend=edge_tts 初始化成功')
-        elif self._backend in ('sovits', 'gpt_sovits'):
-            self._sovits_provider = SovitsTTSProvider(self.config, self.logger, self.cache_dir)
-            await self._sovits_provider.warmup()
+        elif self._backend == 'genie_tts':
+            self._genie_provider = GenieTTSRuntime(self.config, self.logger, str(self.cache_dir))
+            await self._genie_provider.warmup()
         elif self._backend in ('custom',):
             self.logger.warning(f"Runtime TTS backend '{self._backend}' 当前为扩展骨架")
         else:
@@ -49,9 +49,9 @@ class RuntimeTTSProvider(BaseTTSProvider):
 
     async def shutdown(self) -> None:
         self.stop()
-        if self._sovits_provider is not None:
-            await self._sovits_provider.shutdown()
-            self._sovits_provider = None
+        if self._genie_provider is not None:
+            await self._genie_provider.shutdown()
+            self._genie_provider = None
 
     async def synthesize_to_file(
         self,
@@ -78,12 +78,15 @@ class RuntimeTTSProvider(BaseTTSProvider):
             self._qt_speak(text)
             return None
 
-        if self._backend in ('sovits', 'gpt_sovits'):
-            if self._sovits_provider is None:
+        if self._backend == 'genie_tts':
+            if self._genie_provider is None:
                 await self.warmup()
-            if self._sovits_provider is None:
+            if self._genie_provider is None:
                 return None
-            return await self._sovits_provider.synthesize_to_file(text, str(out))
+            if self.config.auto_play:
+                await self._genie_provider.speak(text)
+                return None
+            return await self._genie_provider.synthesize_to_file(text, str(out))
 
         return None
 
@@ -92,7 +95,7 @@ class RuntimeTTSProvider(BaseTTSProvider):
             path = await self.synthesize_to_file(text)
             if path:
                 return Path(path).read_bytes()
-        if self._backend in ('sovits', 'gpt_sovits'):
+        if self._backend == 'genie_tts':
             path = await self.synthesize_to_file(text)
             if path:
                 return Path(path).read_bytes()
@@ -140,5 +143,5 @@ class RuntimeTTSProvider(BaseTTSProvider):
                 self._pyttsx3.stop()
             except Exception:
                 pass
-        if self._sovits_provider is not None:
-            self._sovits_provider.stop()
+        if self._genie_provider is not None:
+            self._genie_provider.stop()

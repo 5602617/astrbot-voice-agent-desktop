@@ -173,7 +173,6 @@ class InteractionConfig:
     bubble_duration: int = 5  # 秒
     bubble_auto_hide: bool = True
     do_not_disturb: bool = False  # 免打扰模式：收到消息不弹窗，只显示动画效果
-    asr_hold_to_talk: bool = False  # 快捷键行为：True=按住说话松开发送，False=按一下开始/结束
 
 
 @dataclass
@@ -213,26 +212,22 @@ class VoiceConfig:
     asr_language: str = "zh"
 
     # ==================== TTS 配置 ====================
-    tts_enabled: bool = True
-    tts_provider_type: str = "none"  # none / http / runtime
-    tts_api_url: str = ""
-    tts_runtime_backend: str = "qt"  # qt / pyttsx3 / edge_tts / gpt_sovits / custom
-    tts_model_path: str = ""
-    tts_speaker: str = ""
-    tts_language: str = "zh"
-    tts_ref_audio_path: str = ""
-    tts_prompt_text: str = ""
-    tts_prompt_lang: str = ""
-    tts_timeout: int = 60
-    # SoVITS 本地 API 自启动（兼容本地 api_v2.py）
-    sovits_auto_start: bool = False
-    sovits_project_dir: str = ""
-    sovits_api_script: str = "api_v2.py"
-    sovits_tts_config: str = "GPT_SoVITS/configs/tts_infer.yaml"
-    sovits_python: str = ""
-    sovits_bind_host: str = "127.0.0.1"
-    sovits_bind_port: int = 9880
-    sovits_start_timeout: int = 25
+    enable_local_tts: bool = True
+    tts_backend: str = "genie_tts"
+    genie_enabled: bool = True
+    genie_mode: str = "predefined"  # predefined | onnx_local
+    genie_predefined_character_name: str = "feibi"
+    genie_character_name: str = ""
+    genie_onnx_model_dir: str = ""
+    genie_language: str = "zh"
+    genie_reference_audio_path: str = ""
+    genie_reference_audio_text: str = ""
+    genie_auto_play: bool = True
+    genie_save_temp_audio: bool = True
+    genie_temp_audio_dir: str = "desktop_client/data/cache/audio"
+    genie_use_data_dir: bool = False
+    genie_data_dir: str = ""
+    genie_timeout: int = 60
 
     # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）
     auto_start_local_asr: bool = False
@@ -439,37 +434,18 @@ class ClientConfig:
         """确保语音模型目录存在并设置默认路径。"""
         base_models = self.get_config_dir() / "models"
         asr_sherpa = base_models / "asr" / "sherpa"
-        tts_sovits = base_models / "tts" / "sovits"
-        tts_ref = tts_sovits / "reference"
-        sovits_project = base_models / "tts" / "sovits_project"
-        for p in [asr_sherpa, tts_sovits, tts_ref]:
+        tts_genie = base_models / "tts" / "genie"
+        for p in [asr_sherpa, tts_genie]:
             p.mkdir(parents=True, exist_ok=True)
-        sovits_project.mkdir(parents=True, exist_ok=True)
 
         if not self.voice.asr_model_path:
             self.voice.asr_model_path = str(asr_sherpa / "model.int8.onnx")
         if not self.voice.asr_tokens_path:
             self.voice.asr_tokens_path = str(asr_sherpa / "tokens.txt")
-        if not self.voice.tts_model_path:
-            self.voice.tts_model_path = str(tts_sovits)
-        if not self.voice.tts_ref_audio_path:
-            self.voice.tts_ref_audio_path = str(tts_ref / "default_ref.wav")
-        if not self.voice.sovits_project_dir:
-            self.voice.sovits_project_dir = str(sovits_project)
-        # 如果检测到用户提供的 GPT-SoVITS 目录，优先使用该目录作为默认项目路径
-        local_sovits_candidate = Path(
-            r"D:\app_dasktop\GPT-SoVITS-v2pro-20250604\GPT-SoVITS-v2pro-20250604"
-        )
-        if (
-            (not self.voice.sovits_project_dir or self.voice.sovits_project_dir == str(sovits_project))
-            and local_sovits_candidate.exists()
-            and (local_sovits_candidate / "api_v2.py").exists()
-        ):
-            self.voice.sovits_project_dir = str(local_sovits_candidate)
-        if not self.voice.tts_api_url:
-            self.voice.tts_api_url = (
-                f"http://{self.voice.sovits_bind_host}:{self.voice.sovits_bind_port}/tts"
-            )
+        if not self.voice.genie_onnx_model_dir:
+            self.voice.genie_onnx_model_dir = str(tts_genie)
+        if not self.voice.genie_temp_audio_dir:
+            self.voice.genie_temp_audio_dir = str(self.get_config_dir() / "cache" / "audio")
         if not self.voice.audio_cache_dir:
             self.voice.audio_cache_dir = str(self.get_config_dir() / "cache" / "audio")
 
@@ -562,9 +538,21 @@ class ClientConfig:
 
             # 加载语音配置
             if "voice" in data:
+                legacy_voice = data["voice"]
                 for key, value in data["voice"].items():
                     if hasattr(config.voice, key):
                         setattr(config.voice, key, value)
+                # 旧配置迁移（SoVITS/旧 TTS 字段 -> Genie-TTS）
+                if "tts_enabled" in legacy_voice:
+                    config.voice.enable_local_tts = bool(legacy_voice.get("tts_enabled"))
+                if "tts_language" in legacy_voice:
+                    config.voice.genie_language = str(legacy_voice.get("tts_language") or "zh")
+                if "tts_model_path" in legacy_voice and not config.voice.genie_onnx_model_dir:
+                    config.voice.genie_onnx_model_dir = str(legacy_voice.get("tts_model_path") or "")
+                if "tts_ref_audio_path" in legacy_voice:
+                    config.voice.genie_reference_audio_path = str(legacy_voice.get("tts_ref_audio_path") or "")
+                if "tts_prompt_text" in legacy_voice:
+                    config.voice.genie_reference_audio_text = str(legacy_voice.get("tts_prompt_text") or "")
 
             # 加载快捷键配置
             if "hotkeys" in data:

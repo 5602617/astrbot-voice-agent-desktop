@@ -29,23 +29,21 @@ class ASRProviderConfig:
 @dataclass
 class TTSProviderConfig:
     enabled: bool = False
-    provider_type: str = "none"  # none / http / runtime
-    api_url: str = ""
-    method: str = "POST"  # 兼容 http provider
-    text_field: str = "text"  # 兼容 http provider
-    response_mode: str = "audio_stream"  # 兼容 http provider
-    response_key: str = "audio_url"  # 兼容 http provider
-    runtime_backend: str = "qt"  # qt / pyttsx3 / edge_tts / gpt_sovits / custom
-    model_path: str = ""
-    speaker: str = ""
+    provider_type: str = "runtime"  # fixed: runtime
+    runtime_backend: str = "genie_tts"  # fixed backend
+    mode: str = "predefined"  # predefined / onnx_local
+    predefined_character_name: str = ""
+    character_name: str = ""
+    onnx_model_dir: str = ""
     language: str = "zh"
-    ref_audio_path: str = ""
-    prompt_text: str = ""
-    prompt_lang: str = ""
+    reference_audio_path: str = ""
+    reference_audio_text: str = ""
     timeout: int = 60
-    headers_json: str = "{}"  # 兼容旧配置：仅用于 HTTP headers
-    extra_params_json: str = "{}"  # 兼容 http provider
-    audio_format: str = "wav"
+    auto_play: bool = True
+    save_temp_audio: bool = True
+    temp_audio_dir: str = "desktop_client/data/cache/audio"
+    use_genie_data_dir: bool = False
+    genie_data_dir: str = ""
 
 
 @dataclass
@@ -107,24 +105,22 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
     )
 
     tts = TTSProviderConfig(
-        enabled=bool(getattr(voice_cfg, "tts_enabled", getattr(voice_cfg, "enable_tts", False))),
-        provider_type=str(getattr(voice_cfg, "tts_provider_type", "none") or "none"),
-        api_url=str(getattr(voice_cfg, "tts_api_url", "") or ""),
-        method=str(getattr(voice_cfg, "tts_method", "POST") or "POST").upper(),
-        text_field=str(getattr(voice_cfg, "tts_text_field", "text") or "text"),
-        response_mode=str(getattr(voice_cfg, "tts_response_mode", "audio_stream") or "audio_stream"),
-        response_key=str(getattr(voice_cfg, "tts_response_key", "audio_url") or "audio_url"),
-        runtime_backend=str(getattr(voice_cfg, "tts_runtime_backend", "qt") or "qt"),
-        model_path=str(getattr(voice_cfg, "tts_model_path", "") or ""),
-        speaker=str(getattr(voice_cfg, "tts_speaker", "") or ""),
-        language=str(getattr(voice_cfg, "tts_language", "zh") or "zh"),
-        ref_audio_path=str(getattr(voice_cfg, "tts_ref_audio_path", "") or ""),
-        prompt_text=str(getattr(voice_cfg, "tts_prompt_text", "") or ""),
-        prompt_lang=str(getattr(voice_cfg, "tts_prompt_lang", "") or ""),
-        timeout=int(getattr(voice_cfg, "tts_timeout", 60) or 60),
-        headers_json=str(getattr(voice_cfg, "tts_headers_json", "{}") or "{}"),
-        extra_params_json=str(getattr(voice_cfg, "tts_extra_params_json", "{}") or "{}"),
-        audio_format=str(getattr(voice_cfg, "tts_audio_format", "wav") or "wav"),
+        enabled=bool(getattr(voice_cfg, "enable_local_tts", getattr(voice_cfg, "tts_enabled", getattr(voice_cfg, "enable_tts", False)))),
+        provider_type="runtime",
+        runtime_backend=str(getattr(voice_cfg, "tts_backend", "genie_tts") or "genie_tts"),
+        mode=str(getattr(voice_cfg, "genie_mode", "predefined") or "predefined"),
+        predefined_character_name=str(getattr(voice_cfg, "genie_predefined_character_name", "") or ""),
+        character_name=str(getattr(voice_cfg, "genie_character_name", "") or ""),
+        onnx_model_dir=str(getattr(voice_cfg, "genie_onnx_model_dir", getattr(voice_cfg, "tts_model_path", "")) or ""),
+        language=str(getattr(voice_cfg, "genie_language", getattr(voice_cfg, "tts_language", "zh")) or "zh"),
+        reference_audio_path=str(getattr(voice_cfg, "genie_reference_audio_path", getattr(voice_cfg, "tts_ref_audio_path", "")) or ""),
+        reference_audio_text=str(getattr(voice_cfg, "genie_reference_audio_text", getattr(voice_cfg, "tts_prompt_text", "")) or ""),
+        timeout=int(getattr(voice_cfg, "genie_timeout", getattr(voice_cfg, "tts_timeout", 60)) or 60),
+        auto_play=bool(getattr(voice_cfg, "genie_auto_play", getattr(voice_cfg, "auto_play_tts", True))),
+        save_temp_audio=bool(getattr(voice_cfg, "genie_save_temp_audio", True)),
+        temp_audio_dir=str(getattr(voice_cfg, "genie_temp_audio_dir", getattr(voice_cfg, "audio_cache_dir", "desktop_client/data/cache/audio")) or "desktop_client/data/cache/audio"),
+        use_genie_data_dir=bool(getattr(voice_cfg, "genie_use_data_dir", False)),
+        genie_data_dir=str(getattr(voice_cfg, "genie_data_dir", "") or ""),
     )
 
     pipe = PipelineConfig(

@@ -159,6 +159,8 @@ class CompactChatWindow(QWidget):
     message_sent = Signal(str)
     image_sent = Signal(str, str)  # path, text
     asr_toggle_requested = Signal()
+    asr_pressed = Signal()
+    asr_released = Signal()
     closed = Signal()
     window_moved = Signal(int, int)  # delta_x, delta_y - 窗口移动时发射
     window_resized = Signal()  # 窗口大小改变时发射
@@ -371,8 +373,9 @@ class CompactChatWindow(QWidget):
         self._asr_btn.setObjectName("compactAsrBtn")
         self._asr_btn.setFixedSize(40, 40)
         self._asr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._asr_btn.setToolTip("开始/停止 ASR 录音")
-        self._asr_btn.clicked.connect(self.asr_toggle_requested.emit)
+        self._asr_btn.setToolTip("按住录音，松开结束")
+        self._asr_btn.pressed.connect(self.asr_pressed.emit)
+        self._asr_btn.released.connect(self.asr_released.emit)
         show_asr_btn = True
         if self._config and hasattr(self._config, "voice"):
             show_asr_btn = bool(getattr(self._config.voice, "enable_asr_button", True))
@@ -1902,6 +1905,8 @@ class FloatingBallWindow(QWidget):
     message_sent = Signal(str)
     image_sent = Signal(str, str)
     asr_toggle_requested = Signal()
+    asr_pressed = Signal()
+    asr_released = Signal()
 
     def __init__(self, config=None, parent=None):
         super().__init__(parent)
@@ -1964,6 +1969,8 @@ class FloatingBallWindow(QWidget):
         self._compact_window.message_sent.connect(self.message_sent)
         self._compact_window.image_sent.connect(self.image_sent)
         self._compact_window.asr_toggle_requested.connect(self.asr_toggle_requested)
+        self._compact_window.asr_pressed.connect(self.asr_pressed)
+        self._compact_window.asr_released.connect(self.asr_released)
         self._compact_window.window_moved.connect(self._on_compact_window_moved)
         self._compact_window.window_resized.connect(self._on_compact_window_resized)
 

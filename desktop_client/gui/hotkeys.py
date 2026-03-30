@@ -78,8 +78,6 @@ class HotkeyManager(QObject):
     quick_ask_triggered = Signal()
     cycle_theme_triggered = Signal()
     toggle_asr_triggered = Signal()
-    asr_hold_start_triggered = Signal()
-    asr_hold_end_triggered = Signal()
 
     _instance: Optional["HotkeyManager"] = None
     _initialized: bool = False
@@ -105,9 +103,6 @@ class HotkeyManager(QObject):
         # 尝试导入全局快捷键库
         self._global_hotkey_available = False
         self._keyboard_listener = None
-        self._asr_hold_listener = None
-        self._pressed_keys = set()
-        self._asr_combo_active = False
 
         try:
             from pynput import keyboard
@@ -126,7 +121,6 @@ class HotkeyManager(QObject):
         """设置快捷键配置"""
         self._config = config
         self._setup_qt_shortcuts()
-        self._setup_asr_hold_listener()
         if self._global_enabled:
             self._setup_global_hotkeys()
 
@@ -230,88 +224,6 @@ class HotkeyManager(QObject):
                 pass
             self._keyboard_listener = None
 
-    def _setup_asr_hold_listener(self):
-        if not self._global_hotkey_available:
-            return
-        if self._asr_hold_listener:
-            try:
-                self._asr_hold_listener.stop()
-            except Exception:
-                pass
-            self._asr_hold_listener = None
-
-        try:
-            from pynput import keyboard
-        except Exception:
-            return
-
-        combo = self._parse_combo(self._config.toggle_asr)
-        if not combo:
-            return
-
-        modifiers, key_name = combo
-        self._pressed_keys.clear()
-        self._asr_combo_active = False
-
-        def _normalize(k):
-            try:
-                if hasattr(k, "char") and k.char:
-                    return str(k.char).lower()
-                name = str(k).lower()
-                if "ctrl" in name:
-                    return "ctrl"
-                if "shift" in name:
-                    return "shift"
-                if "alt" in name:
-                    return "alt"
-                if "cmd" in name or "win" in name:
-                    return "meta"
-                return name.replace("key.", "")
-            except Exception:
-                return ""
-
-        def _is_combo_pressed() -> bool:
-            return key_name in self._pressed_keys and all(m in self._pressed_keys for m in modifiers)
-
-        def on_press(k):
-            token = _normalize(k)
-            if not token:
-                return
-            self._pressed_keys.add(token)
-            if _is_combo_pressed() and not self._asr_combo_active:
-                self._asr_combo_active = True
-                self.asr_hold_start_triggered.emit()
-
-        def on_release(k):
-            token = _normalize(k)
-            if token in self._pressed_keys:
-                self._pressed_keys.remove(token)
-            if self._asr_combo_active and not _is_combo_pressed():
-                self._asr_combo_active = False
-                self.asr_hold_end_triggered.emit()
-
-        self._asr_hold_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-        self._asr_hold_listener.daemon = True
-        self._asr_hold_listener.start()
-
-    def _parse_combo(self, key_seq: str):
-        if not key_seq:
-            return None
-        parts = [p.strip().lower() for p in key_seq.split("+") if p.strip()]
-        if not parts:
-            return None
-        mods = []
-        main = parts[-1]
-        for p in parts[:-1]:
-            if p in ("ctrl", "control"):
-                mods.append("ctrl")
-            elif p == "shift":
-                mods.append("shift")
-            elif p == "alt":
-                mods.append("alt")
-            elif p in ("meta", "win", "cmd"):
-                mods.append("meta")
-        return mods, main
 
     def _convert_to_pynput_format(self, qt_key: str) -> Optional[str]:
         """
@@ -368,12 +280,6 @@ class HotkeyManager(QObject):
     def cleanup(self):
         """清理资源"""
         self._stop_global_hotkeys()
-        if self._asr_hold_listener:
-            try:
-                self._asr_hold_listener.stop()
-            except Exception:
-                pass
-            self._asr_hold_listener = None
         for shortcut in self._shortcuts.values():
             shortcut.deleteLater()
         self._shortcuts.clear()

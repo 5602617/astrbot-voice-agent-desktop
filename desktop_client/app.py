@@ -21,8 +21,8 @@ import os
 import sys
 from typing import Optional
 
-from PySide6.QtCore import QTimer, QObject
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer, QObject, QEvent, Qt
+from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
 from qasync import QEventLoop, asyncSlot
 
 from .config import ClientConfig, load_config, save_config
@@ -92,6 +92,7 @@ class DesktopClientApp(QObject):
         self._update_service = None
         self._audio_recorder = AudioRecorderService()
         self._asr_recording = False
+        self._space_recording_active = False
 
         # 重连计时器
         self._reconnect_timer: Optional[QTimer] = None
@@ -198,6 +199,7 @@ class DesktopClientApp(QObject):
             self._app = QApplication(sys.argv)
         if self._app:
             self._app.setQuitOnLastWindowClosed(False)
+            self._app.installEventFilter(self)
 
         # 2. 启用 QSS 主题系统并从配置加载主题
         logger.info("启用 QSS 主题系统")
@@ -493,6 +495,8 @@ class DesktopClientApp(QObject):
         self._floating_ball.message_sent.connect(self._on_message_sent)
         self._floating_ball.image_sent.connect(self._on_image_sent)
         self._floating_ball.asr_toggle_requested.connect(self._toggle_asr_recording)
+        self._floating_ball.asr_pressed.connect(self._start_asr_recording)
+        self._floating_ball.asr_released.connect(self._stop_asr_recording)
         self._floating_ball.show()
         logger.debug("悬浮球创建完成并显示")
 
@@ -602,8 +606,6 @@ class DesktopClientApp(QObject):
         self._hotkey_manager.quick_ask_triggered.connect(self._show_quick_ask)
         self._hotkey_manager.cycle_theme_triggered.connect(self._cycle_theme)
         self._hotkey_manager.toggle_asr_triggered.connect(self._toggle_asr_recording)
-        self._hotkey_manager.asr_hold_start_triggered.connect(self._on_asr_hold_start)
-        self._hotkey_manager.asr_hold_end_triggered.connect(self._on_asr_hold_end)
 
     # ==================== 事件处理 ====================
 
@@ -664,21 +666,10 @@ class DesktopClientApp(QObject):
 
     def _toggle_asr_recording(self):
         """开始/停止本地 ASR 录音并提交到语音流水线。"""
-        if getattr(self.config.interaction, "asr_hold_to_talk", False):
-            # 长按模式由按下/松开信号控制，这里忽略 toggle 触发
-            return
         if self._asr_recording:
             self._stop_asr_recording()
         else:
             self._start_asr_recording()
-
-    def _on_asr_hold_start(self):
-        if getattr(self.config.interaction, "asr_hold_to_talk", False) and not self._asr_recording:
-            self._start_asr_recording()
-
-    def _on_asr_hold_end(self):
-        if getattr(self.config.interaction, "asr_hold_to_talk", False) and self._asr_recording:
-            self._stop_asr_recording()
 
     def _start_asr_recording(self):
         if not self._floating_ball:
@@ -702,6 +693,28 @@ class DesktopClientApp(QObject):
         except Exception as e:
             self._asr_recording = False
             self._floating_ball.show_system_message(f"录音停止失败: {e}")
+
+    def eventFilter(self, watched, event):
+        """固定行为：非文本输入焦点时，长按空格录音，松开提交。"""
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Space:
+            if event.isAutoRepeat():
+                return False
+            focused = QApplication.focusWidget()
+            if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                return False
+            if not self._asr_recording:
+                self._space_recording_active = True
+                self._start_asr_recording()
+                return True
+        elif event.type() == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Space:
+            if event.isAutoRepeat():
+                return False
+            if self._space_recording_active:
+                self._space_recording_active = False
+                if self._asr_recording:
+                    self._stop_asr_recording()
+                return True
+        return super().eventFilter(watched, event)
 
     async def _submit_local_asr_audio_file_with_retry(self, audio_path: str) -> None:
         """在文件句柄完全释放后再提交 ASR，规避 Windows 文件占用错误。"""

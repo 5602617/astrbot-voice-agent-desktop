@@ -683,12 +683,6 @@ class SettingsWindow(QWidget):
 
         layout.addWidget(bubble_section)
 
-        asr_mode_section = SettingsSection("ASR 快捷键行为")
-        self._asr_hold_to_talk = QCheckBox("按住说话（松开结束）")
-        self._asr_hold_to_talk.setToolTip("关闭后改为：按一次开始录音，再按一次结束录音")
-        asr_mode_section.add_widget(self._asr_hold_to_talk)
-        layout.addWidget(asr_mode_section)
-
         # 语音设置
         voice_section = SettingsSection("语音设置")
 
@@ -702,13 +696,33 @@ class SettingsWindow(QWidget):
         self._asr_model_path = QLineEdit()
         voice_section.add_row("ASR 模型路径（Sherpa）", self._asr_model_path)
 
-        self._tts_enabled = QCheckBox("启用 TTS")
+        self._tts_enabled = QCheckBox("启用本地 TTS")
         voice_section.add_widget(self._tts_enabled)
-
-        self._tts_model_path = QLineEdit()
-        voice_section.add_row("TTS 模型路径", self._tts_model_path)
+        self._tts_mode = QComboBox()
+        self._tts_mode.addItem("预置角色模式", "predefined")
+        self._tts_mode.addItem("本地 ONNX 模型模式", "onnx_local")
+        voice_section.add_row("Genie 模式", self._tts_mode)
+        self._genie_predefined_character_name = QLineEdit()
+        voice_section.add_row("预置角色名", self._genie_predefined_character_name)
+        self._genie_character_name = QLineEdit()
+        voice_section.add_row("角色名", self._genie_character_name)
+        self._genie_onnx_model_dir = QLineEdit()
+        voice_section.add_row("ONNX 模型目录", self._genie_onnx_model_dir)
+        self._genie_language = QLineEdit()
+        self._genie_language.setPlaceholderText("zh")
+        voice_section.add_row("语言", self._genie_language)
+        self._genie_reference_audio_path = QLineEdit()
+        voice_section.add_row("参考音频(可选)", self._genie_reference_audio_path)
+        self._genie_reference_audio_text = QLineEdit()
+        voice_section.add_row("参考音频文本(可选)", self._genie_reference_audio_text)
+        self._genie_auto_play = QCheckBox("自动播放")
+        voice_section.add_widget(self._genie_auto_play)
+        self._genie_data_dir = QLineEdit()
+        voice_section.add_row("GENIE_DATA_DIR(可选)", self._genie_data_dir)
         self._emit_asr_text_message = QCheckBox("ASR 文本显示到对话框")
         voice_section.add_widget(self._emit_asr_text_message)
+        self._tts_mode.currentIndexChanged.connect(self._update_genie_mode_visibility)
+        self._update_genie_mode_visibility()
 
         layout.addWidget(voice_section)
 
@@ -833,6 +847,15 @@ class SettingsWindow(QWidget):
         layout.addStretch()
 
         return tab
+
+    def _update_genie_mode_visibility(self):
+        mode = self._tts_mode.currentData() if hasattr(self, "_tts_mode") else "predefined"
+        is_predefined = mode == "predefined"
+        self._genie_predefined_character_name.setVisible(is_predefined)
+        self._genie_character_name.setVisible(not is_predefined)
+        self._genie_onnx_model_dir.setVisible(not is_predefined)
+        self._genie_reference_audio_path.setVisible(not is_predefined)
+        self._genie_reference_audio_text.setVisible(not is_predefined)
 
     def _create_custom_colors_tab(self) -> QWidget:
         """创建自定义颜色设置标签页"""
@@ -2051,9 +2074,6 @@ class SettingsWindow(QWidget):
             # 气泡设置
             self._bubble_duration.setValue(self.config.interaction.bubble_duration)
             self._bubble_auto_hide.setChecked(self.config.interaction.bubble_auto_hide)
-            self._asr_hold_to_talk.setChecked(
-                getattr(self.config.interaction, "asr_hold_to_talk", False)
-            )
 
         # 语音设置
         if hasattr(self.config, "voice"):
@@ -2065,9 +2085,22 @@ class SettingsWindow(QWidget):
                 getattr(self.config.voice, "asr_model_path", "")
             )
             self._tts_enabled.setChecked(
-                getattr(self.config.voice, "tts_enabled", getattr(self.config.voice, "enable_tts", True))
+                getattr(self.config.voice, "enable_local_tts", getattr(self.config.voice, "tts_enabled", True))
             )
-            self._tts_model_path.setText(getattr(self.config.voice, "tts_model_path", ""))
+            mode = getattr(self.config.voice, "genie_mode", "predefined")
+            for i in range(self._tts_mode.count()):
+                if self._tts_mode.itemData(i) == mode:
+                    self._tts_mode.setCurrentIndex(i)
+                    break
+            self._update_genie_mode_visibility()
+            self._genie_predefined_character_name.setText(getattr(self.config.voice, "genie_predefined_character_name", ""))
+            self._genie_character_name.setText(getattr(self.config.voice, "genie_character_name", ""))
+            self._genie_onnx_model_dir.setText(getattr(self.config.voice, "genie_onnx_model_dir", ""))
+            self._genie_language.setText(getattr(self.config.voice, "genie_language", "zh"))
+            self._genie_reference_audio_path.setText(getattr(self.config.voice, "genie_reference_audio_path", ""))
+            self._genie_reference_audio_text.setText(getattr(self.config.voice, "genie_reference_audio_text", ""))
+            self._genie_auto_play.setChecked(getattr(self.config.voice, "genie_auto_play", True))
+            self._genie_data_dir.setText(getattr(self.config.voice, "genie_data_dir", ""))
             self._emit_asr_text_message.setChecked(
                 getattr(self.config.voice, "emit_asr_text_message", False)
             )
@@ -2454,14 +2487,24 @@ class SettingsWindow(QWidget):
                 "bubble_duration": self._bubble_duration.value(),
                 "bubble_auto_hide": self._bubble_auto_hide.isChecked(),
                 "do_not_disturb": self._do_not_disturb.isChecked(),
-                "asr_hold_to_talk": self._asr_hold_to_talk.isChecked(),
             },
             "voice": {
                 "asr_enabled": self._asr_enabled.isChecked(),
                 "asr_hotkey": self._asr_hotkey.text().strip() or "Ctrl+Shift+R",
                 "asr_model_path": self._asr_model_path.text().strip(),
-                "tts_enabled": self._tts_enabled.isChecked(),
-                "tts_model_path": self._tts_model_path.text().strip(),
+                "enable_local_tts": self._tts_enabled.isChecked(),
+                "tts_backend": "genie_tts",
+                "genie_enabled": self._tts_enabled.isChecked(),
+                "genie_mode": self._tts_mode.currentData(),
+                "genie_predefined_character_name": self._genie_predefined_character_name.text().strip(),
+                "genie_character_name": self._genie_character_name.text().strip(),
+                "genie_onnx_model_dir": self._genie_onnx_model_dir.text().strip(),
+                "genie_language": self._genie_language.text().strip() or "zh",
+                "genie_reference_audio_path": self._genie_reference_audio_path.text().strip(),
+                "genie_reference_audio_text": self._genie_reference_audio_text.text().strip(),
+                "genie_auto_play": self._genie_auto_play.isChecked(),
+                "genie_data_dir": self._genie_data_dir.text().strip(),
+                "genie_use_data_dir": bool(self._genie_data_dir.text().strip()),
                 "emit_asr_text_message": self._emit_asr_text_message.isChecked(),
             },
             "proactive": {
@@ -2555,9 +2598,6 @@ class SettingsWindow(QWidget):
             self.config.interaction.do_not_disturb = settings["interaction"][
                 "do_not_disturb"
             ]
-            self.config.interaction.asr_hold_to_talk = settings["interaction"][
-                "asr_hold_to_talk"
-            ]
 
             # 语音
             self.config.voice.enable_voice_pipeline = True
@@ -2568,11 +2608,19 @@ class SettingsWindow(QWidget):
             self.config.hotkeys.toggle_asr = settings["voice"]["asr_hotkey"]
             self.config.voice.asr_runtime_backend = "sherpa_onnx"
             self.config.voice.asr_model_path = settings["voice"]["asr_model_path"]
-            self.config.voice.tts_enabled = settings["voice"]["tts_enabled"]
-            self.config.voice.enable_tts = settings["voice"]["tts_enabled"]
-            self.config.voice.tts_provider_type = "http"
-            self.config.voice.tts_runtime_backend = "qt"
-            self.config.voice.tts_model_path = settings["voice"]["tts_model_path"]
+            self.config.voice.enable_local_tts = settings["voice"]["enable_local_tts"]
+            self.config.voice.tts_backend = "genie_tts"
+            self.config.voice.genie_enabled = settings["voice"]["genie_enabled"]
+            self.config.voice.genie_mode = settings["voice"]["genie_mode"]
+            self.config.voice.genie_predefined_character_name = settings["voice"]["genie_predefined_character_name"]
+            self.config.voice.genie_character_name = settings["voice"]["genie_character_name"]
+            self.config.voice.genie_onnx_model_dir = settings["voice"]["genie_onnx_model_dir"]
+            self.config.voice.genie_language = settings["voice"]["genie_language"]
+            self.config.voice.genie_reference_audio_path = settings["voice"]["genie_reference_audio_path"]
+            self.config.voice.genie_reference_audio_text = settings["voice"]["genie_reference_audio_text"]
+            self.config.voice.genie_auto_play = settings["voice"]["genie_auto_play"]
+            self.config.voice.genie_data_dir = settings["voice"]["genie_data_dir"]
+            self.config.voice.genie_use_data_dir = settings["voice"]["genie_use_data_dir"]
             self.config.voice.emit_asr_text_message = settings["voice"]["emit_asr_text_message"]
 
             # 主动对话

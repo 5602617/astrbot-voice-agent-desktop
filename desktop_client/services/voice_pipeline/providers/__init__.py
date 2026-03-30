@@ -4,8 +4,7 @@ from .http_tts import HTTPTTSProvider
 from .runtime_asr import RuntimeASRProvider
 from .runtime_tts import RuntimeTTSProvider
 from .sherpa_asr import SherpaASRProvider
-from .sovits_tts import SovitsTTSProvider
-from .local_sovits_runtime import LocalSovitsRuntime
+from .genie_tts_runtime import GenieTTSRuntime
 
 __all__ = [
     'NoopASRProvider',
@@ -15,6 +14,5 @@ __all__ = [
     'RuntimeASRProvider',
     'RuntimeTTSProvider',
     'SherpaASRProvider',
-    'SovitsTTSProvider',
-    'LocalSovitsRuntime',
+    'GenieTTSRuntime',
 ]
