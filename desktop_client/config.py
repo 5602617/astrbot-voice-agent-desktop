@@ -455,6 +455,16 @@ class ClientConfig:
             self.voice.tts_ref_audio_path = str(tts_ref / "default_ref.wav")
         if not self.voice.sovits_project_dir:
             self.voice.sovits_project_dir = str(sovits_project)
+        # 如果检测到用户提供的 GPT-SoVITS 目录，优先使用该目录作为默认项目路径
+        local_sovits_candidate = Path(
+            r"D:\app_dasktop\GPT-SoVITS-v2pro-20250604\GPT-SoVITS-v2pro-20250604"
+        )
+        if (
+            (not self.voice.sovits_project_dir or self.voice.sovits_project_dir == str(sovits_project))
+            and local_sovits_candidate.exists()
+            and (local_sovits_candidate / "api_v2.py").exists()
+        ):
+            self.voice.sovits_project_dir = str(local_sovits_candidate)
         if not self.voice.tts_api_url:
             self.voice.tts_api_url = (
                 f"http://{self.voice.sovits_bind_host}:{self.voice.sovits_bind_port}/tts"

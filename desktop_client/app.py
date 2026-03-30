@@ -683,10 +683,6 @@ class DesktopClientApp(QObject):
         if not self._floating_ball:
             return
 
-        if not self.config.voice.enable_asr_hotkey:
-            self._floating_ball.show_system_message("ASR 快捷键已禁用")
-            return
-
         if not self._asr_recording:
             try:
                 self._audio_recorder.start()
