@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import tempfile
+import time
 import wave
 from pathlib import Path
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 
 class AudioRecorderError(RuntimeError):
@@ -51,13 +56,26 @@ class AudioRecorderService:
         )
         self._stream.start_stream()
         self._recording = True
+        logger.info("ASR录音开始")
 
     def stop(self) -> str:
         if not self._recording:
             raise AudioRecorderError("录音尚未开始")
 
+        logger.info("ASR录音停止请求")
         assert self._stream is not None
         self._stream.stop_stream()
+
+        # 等待流进入 inactive，避免 Windows 下文件写入/设备句柄释放竞争
+        wait_steps = 25  # 25 * 20ms = 500ms
+        for _ in range(wait_steps):
+            try:
+                if not self._stream.is_active():
+                    break
+            except Exception:
+                break
+            time.sleep(0.02)
+
         self._stream.close()
         self._stream = None
 
@@ -68,6 +86,7 @@ class AudioRecorderService:
         self._recording = False
 
         fd, path = tempfile.mkstemp(prefix="asr_record_", suffix=".wav")
+        os.close(fd)
         Path(path).unlink(missing_ok=True)
         with wave.open(path, "wb") as wf:
             wf.setnchannels(self.channels)
@@ -75,4 +94,5 @@ class AudioRecorderService:
             wf.setframerate(self.sample_rate)
             wf.writeframes(b"".join(self._frames))
 
+        logger.info("ASR录音文件关闭完成: %s", path)
         return path

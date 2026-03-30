@@ -16,6 +16,7 @@ AstrBot 桌面客户端主应用 (QAsync 重构版)
 """
 
 import asyncio
+import errno
 import os
 import sys
 from typing import Optional
@@ -683,10 +684,49 @@ class DesktopClientApp(QObject):
             audio_path = self._audio_recorder.stop()
             self._asr_recording = False
             self._floating_ball.show_system_message("🧠 正在识别语音...")
-            asyncio.ensure_future(self.submit_local_asr_audio_file(audio_path))
+            asyncio.ensure_future(self._submit_local_asr_audio_file_with_retry(audio_path))
         except Exception as e:
             self._asr_recording = False
             self._floating_ball.show_system_message(f"录音停止失败: {e}")
+
+    async def _submit_local_asr_audio_file_with_retry(self, audio_path: str) -> None:
+        """在文件句柄完全释放后再提交 ASR，规避 Windows 文件占用错误。"""
+        logger.info("ASR准备提交文件: %s", audio_path)
+        attempts = 3
+        delay_seconds = 0.2
+
+        # stop() 返回后增加短暂缓冲，避免录音后端尚未完全释放
+        await asyncio.sleep(0.3)
+
+        for i in range(1, attempts + 1):
+            try:
+                with open(audio_path, "rb") as f:
+                    f.read(1)
+                logger.info("ASR实际提交文件路径: %s (attempt=%s)", audio_path, i)
+                await self.submit_local_asr_audio_file(audio_path)
+                return
+            except OSError as e:
+                is_sharing_violation = (
+                    getattr(e, "winerror", None) == 32
+                    or e.errno in (errno.EACCES, errno.EPERM)
+                )
+                if is_sharing_violation and i < attempts:
+                    logger.warning(
+                        "ASR文件仍被占用，重试中 (%s/%s): %s", i, attempts, audio_path
+                    )
+                    await asyncio.sleep(delay_seconds)
+                    continue
+                logger.exception("ASR提交失败（文件不可访问）: %s", audio_path)
+                if self._floating_ball:
+                    self._floating_ball.show_system_message(
+                        f"语音识别失败：录音文件仍被占用（{e}）"
+                    )
+                return
+            except Exception as e:
+                logger.exception("ASR提交失败: %s", e)
+                if self._floating_ball:
+                    self._floating_ball.show_system_message(f"语音识别失败: {e}")
+                return
 
     @asyncSlot(str)
     async def _on_message_sent(self, message: str):
