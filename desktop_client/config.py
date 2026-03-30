@@ -223,6 +223,15 @@ class VoiceConfig:
     tts_prompt_text: str = ""
     tts_prompt_lang: str = ""
     tts_timeout: int = 60
+    # SoVITS 本地 API 自启动（兼容本地 api_v2.py）
+    sovits_auto_start: bool = False
+    sovits_project_dir: str = ""
+    sovits_api_script: str = "api_v2.py"
+    sovits_tts_config: str = "GPT_SoVITS/configs/tts_infer.yaml"
+    sovits_python: str = ""
+    sovits_bind_host: str = "127.0.0.1"
+    sovits_bind_port: int = 9880
+    sovits_start_timeout: int = 25
 
     # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）
     auto_start_local_asr: bool = False
@@ -431,8 +440,10 @@ class ClientConfig:
         asr_sherpa = base_models / "asr" / "sherpa"
         tts_sovits = base_models / "tts" / "sovits"
         tts_ref = tts_sovits / "reference"
+        sovits_project = base_models / "tts" / "sovits_project"
         for p in [asr_sherpa, tts_sovits, tts_ref]:
             p.mkdir(parents=True, exist_ok=True)
+        sovits_project.mkdir(parents=True, exist_ok=True)
 
         if not self.voice.asr_model_path:
             self.voice.asr_model_path = str(asr_sherpa / "model.int8.onnx")
@@ -442,6 +453,12 @@ class ClientConfig:
             self.voice.tts_model_path = str(tts_sovits)
         if not self.voice.tts_ref_audio_path:
             self.voice.tts_ref_audio_path = str(tts_ref / "default_ref.wav")
+        if not self.voice.sovits_project_dir:
+            self.voice.sovits_project_dir = str(sovits_project)
+        if not self.voice.tts_api_url:
+            self.voice.tts_api_url = (
+                f"http://{self.voice.sovits_bind_host}:{self.voice.sovits_bind_port}/tts"
+            )
         if not self.voice.audio_cache_dir:
             self.voice.audio_cache_dir = str(self.get_config_dir() / "cache" / "audio")
 

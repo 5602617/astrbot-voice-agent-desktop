@@ -768,6 +768,27 @@ class SettingsWindow(QWidget):
         voice_section.add_row("SoVITS Prompt Lang", self._tts_prompt_lang)
         self._tts_speaker = QLineEdit()
         voice_section.add_row("SoVITS Speaker", self._tts_speaker)
+        self._sovits_auto_start = QCheckBox("启动客户端时自动启动 SoVITS API")
+        voice_section.add_widget(self._sovits_auto_start)
+        self._sovits_project_dir = QLineEdit()
+        self._sovits_project_dir.setPlaceholderText("D:/GPT-SoVITS")
+        voice_section.add_row("SoVITS 项目目录", self._sovits_project_dir)
+        self._sovits_api_script = QLineEdit()
+        self._sovits_api_script.setPlaceholderText("api_v2.py")
+        voice_section.add_row("SoVITS API 脚本", self._sovits_api_script)
+        self._sovits_tts_config = QLineEdit()
+        self._sovits_tts_config.setPlaceholderText("GPT_SoVITS/configs/tts_infer.yaml")
+        voice_section.add_row("SoVITS TTS 配置", self._sovits_tts_config)
+        self._sovits_python = QLineEdit()
+        self._sovits_python.setPlaceholderText("留空则使用当前 Python")
+        voice_section.add_row("SoVITS Python", self._sovits_python)
+        self._sovits_bind_host = QLineEdit()
+        self._sovits_bind_host.setPlaceholderText("127.0.0.1")
+        voice_section.add_row("SoVITS Host", self._sovits_bind_host)
+        self._sovits_bind_port = QSpinBox()
+        self._sovits_bind_port.setRange(1, 65535)
+        self._sovits_bind_port.setValue(9880)
+        voice_section.add_row("SoVITS Port", self._sovits_bind_port)
 
         self._interrupt_tts_on_new_input = QCheckBox("新输入时中断 TTS")
         voice_section.add_widget(self._interrupt_tts_on_new_input)
@@ -2192,6 +2213,27 @@ class SettingsWindow(QWidget):
                 getattr(self.config.voice, "tts_prompt_lang", "")
             )
             self._tts_speaker.setText(getattr(self.config.voice, "tts_speaker", ""))
+            self._sovits_auto_start.setChecked(
+                getattr(self.config.voice, "sovits_auto_start", False)
+            )
+            self._sovits_project_dir.setText(
+                getattr(self.config.voice, "sovits_project_dir", "")
+            )
+            self._sovits_api_script.setText(
+                getattr(self.config.voice, "sovits_api_script", "api_v2.py")
+            )
+            self._sovits_tts_config.setText(
+                getattr(self.config.voice, "sovits_tts_config", "GPT_SoVITS/configs/tts_infer.yaml")
+            )
+            self._sovits_python.setText(
+                getattr(self.config.voice, "sovits_python", "")
+            )
+            self._sovits_bind_host.setText(
+                getattr(self.config.voice, "sovits_bind_host", "127.0.0.1")
+            )
+            self._sovits_bind_port.setValue(
+                int(getattr(self.config.voice, "sovits_bind_port", 9880) or 9880)
+            )
             self._interrupt_tts_on_new_input.setChecked(
                 getattr(self.config.voice, "interrupt_tts_on_new_input", True)
             )
@@ -2616,6 +2658,13 @@ class SettingsWindow(QWidget):
                 "tts_prompt_text": self._tts_prompt_text.text().strip(),
                 "tts_prompt_lang": self._tts_prompt_lang.text().strip(),
                 "tts_speaker": self._tts_speaker.text().strip(),
+                "sovits_auto_start": self._sovits_auto_start.isChecked(),
+                "sovits_project_dir": self._sovits_project_dir.text().strip(),
+                "sovits_api_script": self._sovits_api_script.text().strip() or "api_v2.py",
+                "sovits_tts_config": self._sovits_tts_config.text().strip() or "GPT_SoVITS/configs/tts_infer.yaml",
+                "sovits_python": self._sovits_python.text().strip(),
+                "sovits_bind_host": self._sovits_bind_host.text().strip() or "127.0.0.1",
+                "sovits_bind_port": self._sovits_bind_port.value(),
                 "interrupt_tts_on_new_input": self._interrupt_tts_on_new_input.isChecked(),
                 "interrupt_asr_on_new_input": self._interrupt_asr_on_new_input.isChecked(),
                 "auto_play_tts": self._auto_play_tts.isChecked(),
@@ -2740,6 +2789,13 @@ class SettingsWindow(QWidget):
             self.config.voice.tts_prompt_text = settings["voice"]["tts_prompt_text"]
             self.config.voice.tts_prompt_lang = settings["voice"]["tts_prompt_lang"]
             self.config.voice.tts_speaker = settings["voice"]["tts_speaker"]
+            self.config.voice.sovits_auto_start = settings["voice"]["sovits_auto_start"]
+            self.config.voice.sovits_project_dir = settings["voice"]["sovits_project_dir"]
+            self.config.voice.sovits_api_script = settings["voice"]["sovits_api_script"]
+            self.config.voice.sovits_tts_config = settings["voice"]["sovits_tts_config"]
+            self.config.voice.sovits_python = settings["voice"]["sovits_python"]
+            self.config.voice.sovits_bind_host = settings["voice"]["sovits_bind_host"]
+            self.config.voice.sovits_bind_port = settings["voice"]["sovits_bind_port"]
             self.config.voice.interrupt_tts_on_new_input = settings["voice"]["interrupt_tts_on_new_input"]
             self.config.voice.interrupt_asr_on_new_input = settings["voice"]["interrupt_asr_on_new_input"]
             self.config.voice.auto_play_tts = settings["voice"]["auto_play_tts"]

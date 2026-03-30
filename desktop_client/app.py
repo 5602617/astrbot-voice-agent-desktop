@@ -30,6 +30,7 @@ from .bridge import MessageBridge, InputMessage
 from .services.proactive_dialog import ProactiveDialogService
 from .services import get_chat_history_manager, UpdateService
 from .services.audio_recorder import AudioRecorderService, AudioRecorderError
+from .services.sovits_api_manager import SovitsApiManager
 from .handlers import (
     MessageHandler,
     ScreenshotHandler,
@@ -92,6 +93,7 @@ class DesktopClientApp(QObject):
         self._update_service = None
         self._audio_recorder = AudioRecorderService()
         self._asr_recording = False
+        self._sovits_api_manager = SovitsApiManager(self.config, logger)
 
         # 重连计时器
         self._reconnect_timer: Optional[QTimer] = None
@@ -239,6 +241,13 @@ class DesktopClientApp(QObject):
 
     async def _startup(self):
         """启动时异步任务"""
+        try:
+            await self._sovits_api_manager.ensure_started()
+        except Exception as e:
+            logger.error(f"SoVITS API 自动启动失败: {e}")
+            if self._floating_ball:
+                self._floating_ball.show_system_message(f"SoVITS 启动失败: {e}")
+
         await self._plugin_manager.start()
         if self._plugin_manager.get_plugin("local_voice_bridge"):
             await self._plugin_manager.enable_plugin("local_voice_bridge")
@@ -625,6 +634,10 @@ class DesktopClientApp(QObject):
         """配置保存后热重载语音流水线配置。"""
         if not success:
             return
+        if self._sovits_api_manager.is_enabled():
+            asyncio.ensure_future(self._sovits_api_manager.restart_if_needed())
+        else:
+            asyncio.ensure_future(self._sovits_api_manager.stop())
         plugin = self._plugin_manager.get_plugin("local_voice_bridge")
         if plugin and hasattr(plugin, "reload_from_config"):
             asyncio.ensure_future(plugin.reload_from_config())
@@ -868,6 +881,7 @@ class DesktopClientApp(QObject):
 
         if self._proactive_service:
             self._proactive_service.stop()
+        asyncio.ensure_future(self._sovits_api_manager.stop())
 
         python = sys.executable
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -902,6 +916,7 @@ class DesktopClientApp(QObject):
 
         asyncio.ensure_future(self._plugin_manager.stop())
         asyncio.ensure_future(self._bridge.disconnect_server())
+        asyncio.ensure_future(self._sovits_api_manager.stop())
 
         if self._app:
             self._app.quit()

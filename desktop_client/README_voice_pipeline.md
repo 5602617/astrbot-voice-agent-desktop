@@ -207,13 +207,19 @@ desktop_client/services/voice_pipeline/
   "voice": {
     "tts_enabled": true,
     "tts_provider_type": "runtime",
-    "tts_runtime_backend": "sovits",
-    "tts_runtime_python": "python",
-    "tts_runtime_script": "scripts/sovits_wrapper.py",
+    "tts_runtime_backend": "gpt_sovits",
     "tts_model_path": "models/sovits",
+    "tts_api_url": "http://127.0.0.1:9880/tts",
     "tts_ref_audio_path": "assets/ref.wav",
     "tts_prompt_text": "示例提示词",
-    "tts_prompt_lang": "zh"
+    "tts_prompt_lang": "zh",
+    "sovits_auto_start": true,
+    "sovits_project_dir": "D:/GPT-SoVITS",
+    "sovits_api_script": "api_v2.py",
+    "sovits_tts_config": "GPT_SoVITS/configs/tts_infer.yaml",
+    "sovits_python": "",
+    "sovits_bind_host": "127.0.0.1",
+    "sovits_bind_port": 9880
   }
 }
 ```
@@ -239,8 +245,10 @@ desktop_client/services/voice_pipeline/
    - `audio_stream`/`json_url`/`json_file`/`json_base64`
 
 5. SoVITS runtime 失败
-   - 检查 `tts_runtime_script` 路径
-   - 手动执行脚本确认参数 `--text --output` 可用
+   - 检查 `sovits_project_dir` 下是否存在 `api_v2.py`
+   - 检查 `sovits_tts_config` 是否可在该项目目录下访问
+   - 手动执行：
+     - `python api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/tts_infer.yaml`
 
 6. 语音失败影响文本
    - 正常不应发生；provider 会回退 noop，不影响文本主链路
