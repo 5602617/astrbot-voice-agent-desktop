@@ -109,3 +109,6 @@ class LocalVoiceBridgePlugin(IPlugin):
         self._runtime.set_tts_enabled(enabled)
         self.set_config_value("tts_enabled", enabled)
         self.save_config()
+
+    async def reload_from_config(self) -> None:
+        await self._runtime.reload_from_config()

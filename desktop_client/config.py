@@ -431,6 +431,31 @@ class ClientConfig:
         # 确保反序列化后锁存在
         if not hasattr(self, "_lock"):
             object.__setattr__(self, "_lock", threading.Lock())
+        self._ensure_voice_model_dirs()
+
+    def _ensure_voice_model_dirs(self) -> None:
+        """确保语音模型目录存在并设置默认路径。"""
+        base_models = self.get_config_dir() / "models"
+        asr_sherpa = base_models / "asr" / "sherpa"
+        tts_sovits = base_models / "tts" / "sovits"
+        tts_ref = tts_sovits / "reference"
+        for p in [asr_sherpa, tts_sovits, tts_ref]:
+            p.mkdir(parents=True, exist_ok=True)
+
+        if not self.voice.asr_model_path:
+            self.voice.asr_model_path = str(asr_sherpa / "model.int8.onnx")
+        if not self.voice.asr_tokens_path:
+            self.voice.asr_tokens_path = str(asr_sherpa / "tokens.txt")
+        if not self.voice.tts_model_path:
+            self.voice.tts_model_path = str(tts_sovits)
+        if not self.voice.tts_ref_audio_path:
+            self.voice.tts_ref_audio_path = str(tts_ref / "default_ref.wav")
+        if not self.voice.tts_runtime_script:
+            self.voice.tts_runtime_script = str(
+                Path(__file__).parent.parent / "scripts" / "sovits_wrapper.py"
+            )
+        if not self.voice.audio_cache_dir:
+            self.voice.audio_cache_dir = str(self.get_config_dir() / "cache" / "audio")
 
     @classmethod
     def get_config_dir(cls) -> Path:

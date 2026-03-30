@@ -150,6 +150,7 @@ class DesktopClientApp(QObject):
         self._settings_controller.reconnect_requested.connect(
             lambda: asyncio.ensure_future(self._reconnect_server())
         )
+        self._settings_controller.config_saved.connect(self._on_config_saved)
 
     def _is_autostart_launch(self) -> bool:
         """检测是否为开机自启启动
@@ -618,6 +619,14 @@ class DesktopClientApp(QObject):
 
         logger.debug("悬浮球双击：触发主动对话截图...")
         self._screenshot_handler.do_proactive_screenshot()
+
+    def _on_config_saved(self, success: bool):
+        """配置保存后热重载语音流水线配置。"""
+        if not success:
+            return
+        plugin = self._plugin_manager.get_plugin("local_voice_bridge")
+        if plugin and hasattr(plugin, "reload_from_config"):
+            asyncio.ensure_future(plugin.reload_from_config())
 
     def _show_bubble_input(self):
         """显示气泡输入"""

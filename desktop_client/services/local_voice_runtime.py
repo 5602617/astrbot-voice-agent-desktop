@@ -32,6 +32,9 @@ class LocalVoiceRuntime:
     async def start(self) -> None:
         await self._pipeline.reload_from_config()
 
+    async def reload_from_config(self) -> None:
+        await self._pipeline.reload_from_config()
+
     async def submit_asr_text(self, text: str, session_id: Optional[str] = None) -> bool:
         if not text.strip():
             return False
