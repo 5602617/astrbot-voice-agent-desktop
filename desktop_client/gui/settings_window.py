@@ -615,7 +615,6 @@ class SettingsWindow(QWidget):
             ("toggle_ball", "显示/隐藏悬浮球", "Ctrl+Shift+B"),
             ("quick_ask", "快速提问", "Ctrl+Shift+Q"),
             ("cycle_theme", "切换主题", "Ctrl+Shift+T"),
-            ("toggle_asr", "ASR 开始/停止", "Ctrl+Shift+R"),
         ]
 
         for key, label, default in hotkey_items:
@@ -688,10 +687,6 @@ class SettingsWindow(QWidget):
 
         self._asr_enabled = QCheckBox("启用 ASR")
         voice_section.add_widget(self._asr_enabled)
-
-        self._asr_hotkey = QLineEdit()
-        self._asr_hotkey.setPlaceholderText("Ctrl+Shift+R")
-        voice_section.add_row("ASR 快捷键", self._asr_hotkey)
 
         self._asr_model_path = QLineEdit()
         voice_section.add_row("ASR 模型路径（Sherpa）", self._asr_model_path)
@@ -2078,9 +2073,6 @@ class SettingsWindow(QWidget):
         # 语音设置
         if hasattr(self.config, "voice"):
             self._asr_enabled.setChecked(getattr(self.config.voice, "asr_enabled", False))
-            self._asr_hotkey.setText(
-                getattr(self.config.voice, "asr_hotkey", "") or getattr(self.config.hotkeys, "toggle_asr", "Ctrl+Shift+R")
-            )
             self._asr_model_path.setText(
                 getattr(self.config.voice, "asr_model_path", "")
             )
@@ -2490,7 +2482,6 @@ class SettingsWindow(QWidget):
             },
             "voice": {
                 "asr_enabled": self._asr_enabled.isChecked(),
-                "asr_hotkey": self._asr_hotkey.text().strip() or "Ctrl+Shift+R",
                 "asr_model_path": self._asr_model_path.text().strip(),
                 "enable_local_tts": self._tts_enabled.isChecked(),
                 "tts_backend": "genie_tts",
@@ -2540,6 +2531,7 @@ class SettingsWindow(QWidget):
 
         # 更新配置对象
         if hasattr(self.config, "server"):  # ClientConfig object
+            from pathlib import Path
             # 服务器
             self.config.server.url = settings["server"]["url"]
             self.config.server.username = settings["server"]["username"]
@@ -2603,11 +2595,15 @@ class SettingsWindow(QWidget):
             self.config.voice.enable_voice_pipeline = True
             self.config.voice.asr_enabled = settings["voice"]["asr_enabled"]
             self.config.voice.asr_provider_type = "runtime"
-            self.config.voice.enable_asr_hotkey = True
-            self.config.voice.asr_hotkey = settings["voice"]["asr_hotkey"]
-            self.config.hotkeys.toggle_asr = settings["voice"]["asr_hotkey"]
+            self.config.voice.enable_asr_hotkey = False
+            self.config.voice.asr_hotkey = "Space(hold)"
             self.config.voice.asr_runtime_backend = "sherpa_onnx"
-            self.config.voice.asr_model_path = settings["voice"]["asr_model_path"]
+            asr_model_input = settings["voice"]["asr_model_path"]
+            asr_path = Path(asr_model_input).expanduser() if asr_model_input else None
+            if asr_path and asr_path.is_file():
+                self.config.voice.asr_model_path = str(asr_path.parent)
+            else:
+                self.config.voice.asr_model_path = asr_model_input
             self.config.voice.enable_local_tts = settings["voice"]["enable_local_tts"]
             self.config.voice.tts_backend = "genie_tts"
             self.config.voice.genie_enabled = settings["voice"]["genie_enabled"]

@@ -24,8 +24,9 @@ class SherpaASRProvider(BaseASRProvider):
         if not self.config.model_path and not (self.config.encoder_path and self.config.decoder_path and self.config.joiner_path):
             raise RuntimeError("SherpaASR 初始化失败：缺少 model_path 或 encoder/decoder/joiner 路径")
 
-        if self.config.tokens_path and not Path(self.config.tokens_path).exists():
-            raise FileNotFoundError(f"SherpaASR tokens 文件不存在: {self.config.tokens_path}")
+        model_path, tokens_path = self._resolve_sherpa_paths()
+        self.config.model_path = model_path
+        self.config.tokens_path = tokens_path
 
         # 优先使用项目里常见封装：backend.asr.sherpa_asr.SherpaASR
         try:
@@ -34,8 +35,8 @@ class SherpaASRProvider(BaseASRProvider):
             def _init_wrapper():
                 return SherpaASR(
                     sample_rate=16000,
-                    model_path=self.config.model_path or None,
-                    tokens_path=self.config.tokens_path or None,
+                    model_path=model_path or None,
+                    tokens_path=tokens_path or None,
                 )
 
             self._engine = await asyncio.to_thread(_init_wrapper)
@@ -54,6 +55,46 @@ class SherpaASRProvider(BaseASRProvider):
             "检测到 sherpa_onnx 依赖，但缺少可用的 SherpaASR 封装。"
             "请提供 backend.asr.sherpa_asr.SherpaASR 或扩展 SherpaASRProvider。"
         )
+
+    def _resolve_sherpa_paths(self) -> tuple[str, str]:
+        model_raw = str(self.config.model_path or "").strip()
+        tokens_raw = str(self.config.tokens_path or "").strip()
+        model_candidates = ("model.int8.onnx", "model.onnx", "encoder.int8.onnx")
+
+        model_path = Path(model_raw) if model_raw else None
+        search_dir = None
+        if model_path and model_path.exists():
+            search_dir = model_path.parent if model_path.is_file() else model_path
+            if model_path.is_dir():
+                for name in model_candidates:
+                    p = model_path / name
+                    if p.exists():
+                        model_path = p
+                        break
+        elif model_path:
+            raise FileNotFoundError(f"SherpaASR model 路径不存在: {model_raw}")
+
+        if model_path is None and self.config.model_path:
+            raise FileNotFoundError(f"SherpaASR model 无法解析: {self.config.model_path}")
+        if model_path is None:
+            raise RuntimeError("SherpaASR 未提供模型目录/文件")
+
+        tokens_path = Path(tokens_raw) if tokens_raw else None
+        if tokens_path and not tokens_path.exists():
+            tokens_path = None
+        if tokens_path is None:
+            lookup_dir = search_dir or model_path.parent
+            candidate = lookup_dir / "tokens.txt"
+            if candidate.exists():
+                tokens_path = candidate
+        if tokens_path is None:
+            lookup_dir = search_dir or model_path.parent
+            raise FileNotFoundError(
+                f"SherpaASR 缺少 tokens.txt。已在目录查找: {lookup_dir}"
+            )
+
+        self.logger.info("SherpaASR 解析模型: model=%s tokens=%s", model_path, tokens_path)
+        return str(model_path), str(tokens_path)
 
     async def shutdown(self) -> None:
         self._engine = None

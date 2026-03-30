@@ -494,7 +494,6 @@ class DesktopClientApp(QObject):
         )
         self._floating_ball.message_sent.connect(self._on_message_sent)
         self._floating_ball.image_sent.connect(self._on_image_sent)
-        self._floating_ball.asr_toggle_requested.connect(self._toggle_asr_recording)
         self._floating_ball.asr_pressed.connect(self._start_asr_recording)
         self._floating_ball.asr_released.connect(self._stop_asr_recording)
         self._floating_ball.show()
@@ -605,7 +604,6 @@ class DesktopClientApp(QObject):
         self._hotkey_manager.toggle_ball_triggered.connect(self._toggle_floating_ball)
         self._hotkey_manager.quick_ask_triggered.connect(self._show_quick_ask)
         self._hotkey_manager.cycle_theme_triggered.connect(self._cycle_theme)
-        self._hotkey_manager.toggle_asr_triggered.connect(self._toggle_asr_recording)
 
     # ==================== 事件处理 ====================
 

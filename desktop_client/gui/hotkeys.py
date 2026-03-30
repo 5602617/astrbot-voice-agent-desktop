@@ -33,8 +33,6 @@ class HotkeyConfig:
     quick_ask: str = "Ctrl+Shift+Q"
     # 切换主题
     cycle_theme: str = "Ctrl+Shift+T"
-    # 触发 ASR 录音
-    toggle_asr: str = "Ctrl+Shift+R"
 
     def to_dict(self) -> Dict[str, str]:
         """转换为字典"""
@@ -45,7 +43,6 @@ class HotkeyConfig:
             "toggle_ball": self.toggle_ball,
             "quick_ask": self.quick_ask,
             "cycle_theme": self.cycle_theme,
-            "toggle_asr": self.toggle_asr,
         }
 
     @classmethod
@@ -58,7 +55,6 @@ class HotkeyConfig:
             toggle_ball=data.get("toggle_ball", "Ctrl+Shift+B"),
             quick_ask=data.get("quick_ask", "Ctrl+Shift+Q"),
             cycle_theme=data.get("cycle_theme", "Ctrl+Shift+T"),
-            toggle_asr=data.get("toggle_asr", "Ctrl+Shift+R"),
         )
 
 
@@ -77,7 +73,6 @@ class HotkeyManager(QObject):
     toggle_ball_triggered = Signal()
     quick_ask_triggered = Signal()
     cycle_theme_triggered = Signal()
-    toggle_asr_triggered = Signal()
 
     _instance: Optional["HotkeyManager"] = None
     _initialized: bool = False
@@ -152,7 +147,6 @@ class HotkeyManager(QObject):
             "toggle_ball": (self._config.toggle_ball, self.toggle_ball_triggered),
             "quick_ask": (self._config.quick_ask, self.quick_ask_triggered),
             "cycle_theme": (self._config.cycle_theme, self.cycle_theme_triggered),
-            "toggle_asr": (self._config.toggle_asr, self.toggle_asr_triggered),
         }
 
         for name, (key_seq, signal) in shortcuts_map.items():
@@ -197,7 +191,6 @@ class HotkeyManager(QObject):
                 self._config.toggle_ball: self.toggle_ball_triggered,
                 self._config.quick_ask: self.quick_ask_triggered,
                 self._config.cycle_theme: self.cycle_theme_triggered,
-                self._config.toggle_asr: self.toggle_asr_triggered,
             }
 
             for key_seq, signal in key_map.items():

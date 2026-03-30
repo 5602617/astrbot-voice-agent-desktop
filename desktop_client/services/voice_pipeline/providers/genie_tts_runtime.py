@@ -22,23 +22,34 @@ class GenieTTSRuntime(BaseTTSProvider):
 
     def validate_config(self) -> list[str]:
         errs: list[str] = []
-        if not self.config.language:
-            errs.append("language 不能为空")
-        if self.config.genie_mode == "predefined":
-            if not self.config.predefined_character_name:
-                errs.append("predefined_character_name 不能为空")
-        elif self.config.genie_mode == "onnx_local":
-            if not self.config.character_name:
-                errs.append("character_name 不能为空")
-            if not self.config.onnx_model_dir:
-                errs.append("onnx_model_dir 不能为空")
-            elif not Path(self.config.onnx_model_dir).exists():
-                errs.append(f"onnx_model_dir 不存在: {self.config.onnx_model_dir}")
-        else:
-            errs.append(f"未知 Genie 模式: {self.config.genie_mode}")
+        mode = getattr(self.config, "genie_mode", getattr(self.config, "mode", "predefined"))
+        language = getattr(self.config, "genie_language", getattr(self.config, "language", "zh"))
+        predefined_name = getattr(
+            self.config,
+            "genie_predefined_voice",
+            getattr(self.config, "genie_predefined_character_name", getattr(self.config, "predefined_character_name", "")),
+        )
+        character_name = getattr(self.config, "genie_character_name", getattr(self.config, "character_name", ""))
+        model_dir = getattr(self.config, "genie_model_dir", getattr(self.config, "onnx_model_dir", ""))
+        ref_audio = getattr(self.config, "genie_reference_audio_path", getattr(self.config, "reference_audio_path", ""))
 
-        if self.config.reference_audio_path and not Path(self.config.reference_audio_path).exists():
-            errs.append(f"reference_audio_path 不存在: {self.config.reference_audio_path}")
+        if not language:
+            errs.append("language 不能为空")
+        if mode == "predefined":
+            if not predefined_name:
+                errs.append("predefined_character_name 不能为空")
+        elif mode == "onnx_local":
+            if not character_name:
+                errs.append("character_name 不能为空")
+            if not model_dir:
+                errs.append("onnx_model_dir 不能为空")
+            elif not Path(model_dir).exists():
+                errs.append(f"onnx_model_dir 不存在: {model_dir}")
+        else:
+            errs.append(f"未知 Genie 模式: {mode}")
+
+        if ref_audio and not Path(ref_audio).exists():
+            errs.append(f"reference_audio_path 不存在: {ref_audio}")
         return errs
 
     async def warmup(self) -> None:
@@ -48,8 +59,8 @@ class GenieTTSRuntime(BaseTTSProvider):
         if errs:
             raise RuntimeError("; ".join(errs))
 
-        if self.config.use_genie_data_dir and self.config.genie_data_dir:
-            os.environ["GENIE_DATA_DIR"] = self.config.genie_data_dir
+        if getattr(self.config, "use_genie_data_dir", False) and getattr(self.config, "genie_data_dir", ""):
+            os.environ["GENIE_DATA_DIR"] = getattr(self.config, "genie_data_dir")
 
         try:
             import genie_tts as genie  # type: ignore
@@ -62,23 +73,33 @@ class GenieTTSRuntime(BaseTTSProvider):
 
     def _initialize_character(self) -> None:
         assert self._genie is not None
-        if self.config.genie_mode == "predefined":
-            cname = self.config.predefined_character_name
+        mode = getattr(self.config, "genie_mode", getattr(self.config, "mode", "predefined"))
+        if mode == "predefined":
+            cname = getattr(
+                self.config,
+                "genie_predefined_voice",
+                getattr(self.config, "genie_predefined_character_name", getattr(self.config, "predefined_character_name", "")),
+            )
             self._genie.load_predefined_character(cname)
             self._character = cname
         else:
+            character_name = getattr(self.config, "genie_character_name", getattr(self.config, "character_name", ""))
+            model_dir = getattr(self.config, "genie_model_dir", getattr(self.config, "onnx_model_dir", ""))
+            language = getattr(self.config, "genie_language", getattr(self.config, "language", "zh"))
             self._genie.load_character(
-                character_name=self.config.character_name,
-                onnx_model_dir=self.config.onnx_model_dir,
-                language=self.config.language,
+                character_name=character_name,
+                onnx_model_dir=model_dir,
+                language=language,
             )
-            self._character = self.config.character_name
+            self._character = character_name
 
-        if self.config.reference_audio_path and self.config.reference_audio_text:
+        ref_audio = getattr(self.config, "genie_reference_audio_path", getattr(self.config, "reference_audio_path", ""))
+        ref_text = getattr(self.config, "genie_reference_audio_text", getattr(self.config, "reference_audio_text", ""))
+        if ref_audio and ref_text:
             self._genie.set_reference_audio(
                 character_name=self._character,
-                audio_path=self.config.reference_audio_path,
-                audio_text=self.config.reference_audio_text,
+                audio_path=ref_audio,
+                audio_text=ref_text,
             )
 
     async def synthesize_to_file(self, text: str, output_path: str | None = None, **kwargs) -> str | None:
