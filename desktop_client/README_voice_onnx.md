@@ -55,19 +55,30 @@
 
 ---
 
-## 4. 角色 ONNX 目录结构示例
+## 4. 角色 ONNX 目录结构示例（建议）
 
-不同导出脚本文件名可能不同，但应包含推理所需核心文件。建议至少包含：
+结合当前客户端常见校验与社区导出目录，建议基础文件至少包含：
 
 ```text
 onnx_out/
-├─ model.onnx                 # 或 model.int8.onnx
-├─ config.json                # 若导出工具生成配置文件
-├─ speakers.json              # 若支持多说话人/角色映射
-└─ ...                        # 其他导出依赖
+├─ t2s_encoder_fp32.bin
+├─ t2s_encoder_fp32.onnx
+├─ t2s_first_stage_decoder_fp32.onnx
+├─ t2s_shared_fp16.bin
+├─ t2s_stage_decoder_fp32.onnx
+├─ vits_fp16.bin
+└─ vits_fp32.onnx
 ```
 
-> 以你本地导出工具文档为准；客户端只负责把目录传给 `genie-tts`。
+若是 `v2ProPlus` 目录，通常还需要：
+
+```text
+onnx_out/
+├─ prompt_encoder_fp16.bin
+└─ prompt_encoder_fp32.onnx
+```
+
+> 实际文件仍以你使用的导出脚本版本为准；客户端会把目录传给 `genie-tts` 运行时加载。
 
 ---
 

@@ -112,25 +112,36 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
         language=str(getattr(voice_cfg, "asr_language", "zh") or "zh"),
     )
 
+    raw_genie_mode = str(getattr(voice_cfg, "genie_mode", "predefined") or "predefined")
+    genie_character_name = str(getattr(voice_cfg, "genie_character_name", "") or "")
+    genie_model_dir = str(getattr(voice_cfg, "genie_onnx_model_dir", getattr(voice_cfg, "tts_model_path", "")) or "")
+    genie_ref_audio = str(getattr(voice_cfg, "genie_reference_audio_path", getattr(voice_cfg, "tts_ref_audio_path", "")) or "")
+    genie_ref_text = str(getattr(voice_cfg, "genie_reference_audio_text", getattr(voice_cfg, "tts_prompt_text", "")) or "")
+    genie_mode = raw_genie_mode
+    if raw_genie_mode == "onnx_local":
+        required_ok = bool(genie_character_name and genie_model_dir and genie_ref_audio and genie_ref_text)
+        if not required_ok:
+            genie_mode = "predefined"
+
     tts = TTSProviderConfig(
         enabled=bool(getattr(voice_cfg, "enable_local_tts", getattr(voice_cfg, "tts_enabled", getattr(voice_cfg, "enable_tts", False)))),
         provider_type="runtime",
         runtime_backend=str(getattr(voice_cfg, "tts_backend", "genie_tts") or "genie_tts"),
-        mode=str(getattr(voice_cfg, "genie_mode", "predefined") or "predefined"),
-        genie_mode=str(getattr(voice_cfg, "genie_mode", "predefined") or "predefined"),
+        mode=genie_mode,
+        genie_mode=genie_mode,
         predefined_character_name=str(getattr(voice_cfg, "genie_predefined_character_name", "") or ""),
         genie_predefined_character_name=str(getattr(voice_cfg, "genie_predefined_character_name", "") or ""),
         genie_predefined_voice=str(getattr(voice_cfg, "genie_predefined_voice", getattr(voice_cfg, "genie_predefined_character_name", "")) or ""),
-        character_name=str(getattr(voice_cfg, "genie_character_name", "") or ""),
-        genie_character_name=str(getattr(voice_cfg, "genie_character_name", "") or ""),
-        onnx_model_dir=str(getattr(voice_cfg, "genie_onnx_model_dir", getattr(voice_cfg, "tts_model_path", "")) or ""),
-        genie_model_dir=str(getattr(voice_cfg, "genie_onnx_model_dir", getattr(voice_cfg, "tts_model_path", "")) or ""),
+        character_name=genie_character_name,
+        genie_character_name=genie_character_name,
+        onnx_model_dir=genie_model_dir,
+        genie_model_dir=genie_model_dir,
         language=str(getattr(voice_cfg, "genie_language", getattr(voice_cfg, "tts_language", "zh")) or "zh"),
         genie_language=str(getattr(voice_cfg, "genie_language", getattr(voice_cfg, "tts_language", "zh")) or "zh"),
-        reference_audio_path=str(getattr(voice_cfg, "genie_reference_audio_path", getattr(voice_cfg, "tts_ref_audio_path", "")) or ""),
-        genie_reference_audio_path=str(getattr(voice_cfg, "genie_reference_audio_path", getattr(voice_cfg, "tts_ref_audio_path", "")) or ""),
-        reference_audio_text=str(getattr(voice_cfg, "genie_reference_audio_text", getattr(voice_cfg, "tts_prompt_text", "")) or ""),
-        genie_reference_audio_text=str(getattr(voice_cfg, "genie_reference_audio_text", getattr(voice_cfg, "tts_prompt_text", "")) or ""),
+        reference_audio_path=genie_ref_audio,
+        genie_reference_audio_path=genie_ref_audio,
+        reference_audio_text=genie_ref_text,
+        genie_reference_audio_text=genie_ref_text,
         timeout=int(getattr(voice_cfg, "genie_timeout", getattr(voice_cfg, "tts_timeout", 60)) or 60),
         auto_play=bool(getattr(voice_cfg, "genie_auto_play", getattr(voice_cfg, "auto_play_tts", True))),
         save_temp_audio=bool(getattr(voice_cfg, "genie_save_temp_audio", True)),

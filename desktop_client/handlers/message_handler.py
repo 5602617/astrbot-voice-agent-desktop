@@ -127,7 +127,7 @@ class MessageHandler(QObject):
                     content, message.metadata, should_silent
                 )
 
-        elif msg_type == "end":
+        elif msg_type in ("end", "complete"):
             self._handle_end_message(is_proactive_response, should_silent)
 
         elif msg_type == "status":

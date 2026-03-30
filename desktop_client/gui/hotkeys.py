@@ -34,6 +34,8 @@ class HotkeyConfig:
     quick_ask: str = "Ctrl+Shift+Q"
     # 切换主题
     cycle_theme: str = "Ctrl+Shift+T"
+    # 录音快捷键（按下开始，松开结束）
+    toggle_asr: str = "Ctrl+T"
 
     def to_dict(self) -> Dict[str, str]:
         """转换为字典"""
@@ -44,6 +46,7 @@ class HotkeyConfig:
             "toggle_ball": self.toggle_ball,
             "quick_ask": self.quick_ask,
             "cycle_theme": self.cycle_theme,
+            "toggle_asr": self.toggle_asr,
         }
 
     @classmethod
@@ -56,6 +59,7 @@ class HotkeyConfig:
             toggle_ball=data.get("toggle_ball", "Ctrl+Shift+B"),
             quick_ask=data.get("quick_ask", "Ctrl+Shift+Q"),
             cycle_theme=data.get("cycle_theme", "Ctrl+Shift+T"),
+            toggle_asr=data.get("toggle_asr", "Ctrl+T"),
         )
 
 
@@ -102,7 +106,7 @@ class HotkeyManager(QObject):
         self._global_hotkey_available = False
         self._keyboard_listener = None
         self._global_key_listener = None
-        self._asr_hotkey: str = "Space"
+        self._asr_hotkey: str = "Ctrl+T"
         self._asr_hotkey_enabled: bool = True
         self._asr_hotkey_vk = None
 
@@ -122,6 +126,7 @@ class HotkeyManager(QObject):
     def set_config(self, config: HotkeyConfig):
         """设置快捷键配置"""
         self._config = config
+        self._asr_hotkey = (config.toggle_asr or "Ctrl+T").strip() or "Ctrl+T"
         self._setup_qt_shortcuts()
         if self._global_enabled:
             self._setup_global_hotkeys()
@@ -129,7 +134,7 @@ class HotkeyManager(QObject):
 
     def set_asr_hotkey(self, key: str, enabled: bool = True):
         """设置语音录音快捷键（全局按下/松开监听）。"""
-        self._asr_hotkey = (key or "Space").strip() or "Space"
+        self._asr_hotkey = (key or "Ctrl+T").strip() or "Ctrl+T"
         self._asr_hotkey_enabled = bool(enabled)
         logger.info("[HotkeyManager] 配置录音快捷键: key=%s enabled=%s", self._asr_hotkey, self._asr_hotkey_enabled)
         self._setup_global_asr_hotkey()
@@ -248,26 +253,32 @@ class HotkeyManager(QObject):
             logger.warning("[HotkeyManager] 无法启用 ASR 全局快捷键：pynput 不可用")
             return
 
-        key_name = self._normalize_single_key(self._asr_hotkey)
-        vk = self._resolve_vk(key_name)
+        key_combo = self._normalize_combo(self._asr_hotkey)
+        vk, need_ctrl, need_shift, need_alt = self._resolve_combo_vk(key_combo)
         if vk is None:
-            logger.warning("[HotkeyManager] 不支持的 ASR 快捷键: %s（仅支持单键）", self._asr_hotkey)
+            logger.warning("[HotkeyManager] 不支持的 ASR 快捷键: %s", self._asr_hotkey)
             return
         self._asr_hotkey_vk = vk
+        pressed = {"ctrl": False, "shift": False, "alt": False, "recording_triggered": False}
 
         def on_press(key):
-            if self._match_vk(key, self._asr_hotkey_vk):
-                self.asr_hotkey_pressed.emit()
+            self._update_modifier_state(key, pressed, is_press=True)
+            if self._match_vk(key, self._asr_hotkey_vk) and self._mods_match(pressed, need_ctrl, need_shift, need_alt):
+                if not pressed["recording_triggered"]:
+                    pressed["recording_triggered"] = True
+                    self.asr_hotkey_pressed.emit()
 
         def on_release(key):
-            if self._match_vk(key, self._asr_hotkey_vk):
+            if self._match_vk(key, self._asr_hotkey_vk) and pressed["recording_triggered"]:
                 self.asr_hotkey_released.emit()
+                pressed["recording_triggered"] = False
+            self._update_modifier_state(key, pressed, is_press=False)
 
         try:
             self._global_key_listener = self._keyboard.Listener(on_press=on_press, on_release=on_release)
             self._global_key_listener.daemon = True
             self._global_key_listener.start()
-            logger.info("[HotkeyManager] ASR 全局快捷键监听已启动: key=%s vk=%s", key_name, vk)
+            logger.info("[HotkeyManager] ASR 全局快捷键监听已启动: key=%s vk=%s", key_combo, vk)
         except Exception as e:
             logger.warning("[HotkeyManager] 启动 ASR 全局快捷键失败: %s", e)
             self._global_key_listener = None
@@ -280,10 +291,26 @@ class HotkeyManager(QObject):
                 pass
             self._global_key_listener = None
 
-    def _normalize_single_key(self, key: str) -> str:
-        return (key or "Space").strip().lower().replace(" ", "")
+    def _normalize_combo(self, key: str) -> str:
+        return (key or "Ctrl+T").strip().lower().replace(" ", "")
 
-    def _resolve_vk(self, key_name: str):
+    def _resolve_combo_vk(self, key_combo: str):
+        parts = [p for p in key_combo.split("+") if p]
+        mods = set()
+        main = ""
+        for p in parts:
+            if p in ("ctrl", "control"):
+                mods.add("ctrl")
+            elif p == "shift":
+                mods.add("shift")
+            elif p == "alt":
+                mods.add("alt")
+            else:
+                main = p
+        vk = self._resolve_vk_from_key(main)
+        return vk, ("ctrl" in mods), ("shift" in mods), ("alt" in mods)
+
+    def _resolve_vk_from_key(self, key_name: str):
         if key_name in ("space",):
             return 32
         if len(key_name) == 1 and key_name.isalpha():
@@ -297,6 +324,25 @@ class HotkeyManager(QObject):
             return getattr(key, "vk", None) == target_vk
         except Exception:
             return False
+
+    def _update_modifier_state(self, key, state: dict, is_press: bool):
+        try:
+            vk = getattr(key, "vk", None)
+            if vk in (162, 163):
+                state["ctrl"] = is_press
+            elif vk in (160, 161):
+                state["shift"] = is_press
+            elif vk in (164, 165):
+                state["alt"] = is_press
+        except Exception:
+            pass
+
+    def _mods_match(self, state: dict, need_ctrl: bool, need_shift: bool, need_alt: bool) -> bool:
+        return (
+            state["ctrl"] == need_ctrl
+            and state["shift"] == need_shift
+            and state["alt"] == need_alt
+        )
 
 
     def _convert_to_pynput_format(self, qt_key: str) -> Optional[str]:

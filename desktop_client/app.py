@@ -611,8 +611,8 @@ class DesktopClientApp(QObject):
         self._hotkey_manager.asr_hotkey_pressed.connect(self._on_global_asr_hotkey_pressed)
         self._hotkey_manager.asr_hotkey_released.connect(self._on_global_asr_hotkey_released)
 
-        asr_hotkey = (getattr(self.config.voice, "asr_hotkey", "Space") or "Space").strip()
-        asr_enabled = bool(getattr(self.config.voice, "enable_asr_hotkey", True))
+        asr_hotkey = (getattr(self.config.hotkeys, "toggle_asr", "Ctrl+T") or "Ctrl+T").strip()
+        asr_enabled = True
         self._hotkey_manager.set_asr_hotkey(asr_hotkey, enabled=asr_enabled)
         logger.info("ASR 热键已初始化: key=%s enabled=%s", asr_hotkey, asr_enabled)
 
@@ -1010,7 +1010,7 @@ class DesktopClientApp(QObject):
     @asyncSlot(object)
     async def _on_bridge_message(self, message):
         """在消息处理前后调度插件钩子。"""
-        if message.msg_type in ("text", "end", "error"):
+        if message.msg_type in ("text", "end", "complete", "error"):
             pre_context = HookContext(
                 hook_type=HookType.PRE_MESSAGE_RECEIVE,
                 data={

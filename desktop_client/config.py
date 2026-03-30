@@ -159,7 +159,7 @@ class HotkeyConfigData:
     toggle_ball: str = "Ctrl+Shift+B"
     quick_ask: str = "Ctrl+Shift+Q"
     cycle_theme: str = "Ctrl+Shift+T"
-    toggle_asr: str = "Ctrl+Shift+R"
+    toggle_asr: str = "Ctrl+T"
     global_enabled: bool = False
 
 
@@ -190,7 +190,7 @@ class VoiceConfig:
     save_audio_cache: bool = True
     audio_cache_dir: str = "desktop_client/data/cache/audio"
     enable_asr_hotkey: bool = True
-    asr_hotkey: str = "Space"
+    asr_hotkey: str = "Ctrl+T"
     enable_asr_button: bool = True
 
     # ==================== ASR 配置 ====================

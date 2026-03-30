@@ -104,11 +104,14 @@ class ChatHistoryManager(QObject):
 
         self._messages: List[ChatMessage] = []
         self._history_path = history_path or self._get_default_history_path()
+        if not self._history_path:
+            self._history_path = self._get_default_history_path()
         self._max_messages = 1000  # 最大保存消息数
         self._auto_save = True  # 自动保存开关
         self._dirty = False  # 是否有未保存的更改
 
         # 加载历史记录
+        logger.info("聊天记录路径初始化: %s", self._history_path)
         self.load_from_file()
 
         ChatHistoryManager._initialized = True
@@ -155,12 +158,16 @@ class ChatHistoryManager(QObject):
         Args:
             path: 新的保存路径
         """
-        if path != self._history_path:
+        new_path = (path or "").strip()
+        if not new_path:
+            new_path = self._get_default_history_path()
+        if new_path != self._history_path:
             # 先保存当前数据到旧路径
             if self._dirty:
                 self.save_to_file()
 
-            self._history_path = path
+            self._history_path = new_path
+            logger.info("聊天记录路径更新: %s", self._history_path)
             # 从新路径加载数据
             self.load_from_file()
 
@@ -306,6 +313,10 @@ class ChatHistoryManager(QObject):
             是否保存成功
         """
         save_path = path or self._history_path
+        if not save_path:
+            save_path = self._get_default_history_path()
+            self._history_path = save_path
+            logger.warning("检测到空聊天记录路径，回退默认路径: %s", save_path)
 
         try:
             # 1. 在主线程中准备数据（避免多线程竞争）
@@ -343,6 +354,10 @@ class ChatHistoryManager(QObject):
             是否保存成功
         """
         save_path = path or self._history_path
+        if not save_path:
+            save_path = self._get_default_history_path()
+            self._history_path = save_path
+            logger.warning("检测到空聊天记录路径，回退默认路径: %s", save_path)
 
         try:
             # 确保目录存在

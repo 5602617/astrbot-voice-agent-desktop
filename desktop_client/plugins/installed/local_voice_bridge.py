@@ -36,6 +36,7 @@ class LocalVoiceBridgePlugin(IPlugin):
             return False
 
         self._runtime = LocalVoiceRuntime(bridge=bridge, config=config)
+        self._seen_complete_keys: set[str] = set()
 
         self.register_hook(HookType.PRE_MESSAGE_SEND, self._on_pre_message_send)
         self.register_hook(HookType.POST_MESSAGE_RECEIVE, self._on_post_message_receive)
@@ -72,8 +73,19 @@ class LocalVoiceBridgePlugin(IPlugin):
                 streaming=bool(context.get("streaming", False)),
                 metadata=metadata,
             )
-        elif msg_type == "end":
+        elif msg_type == "complete":
+            request_id = (metadata or {}).get("request_id", "default")
+            key = f"{session_id}:{request_id}"
+            if key in self._seen_complete_keys:
+                logger.info("LocalVoiceBridge TTS去重命中: key=%s", key)
+                return HookResult.CONTINUE
+            self._seen_complete_keys.add(key)
+            if len(self._seen_complete_keys) > 2048:
+                self._seen_complete_keys = set(list(self._seen_complete_keys)[-512:])
             self._runtime.on_reply_end(session_id=session_id, metadata=metadata)
+            logger.info("LocalVoiceBridge TTS触发: msg_type=complete request_id=%s", request_id)
+        elif msg_type == "end":
+            logger.debug("LocalVoiceBridge 忽略 end 事件（仅 complete 触发 TTS）")
 
         return HookResult.CONTINUE
 

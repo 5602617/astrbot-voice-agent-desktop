@@ -313,13 +313,23 @@ class MessageBridge(QObject):
                 )
             )
 
-        elif event.event_type in ("end", "complete"):
+        elif event.event_type == "complete":
+            self.message_received.emit(
+                OutputMessage(
+                    msg_type="complete",
+                    content="",
+                    session_id=session_id,
+                    is_complete=True,
+                    metadata=base_metadata,
+                )
+            )
+        elif event.event_type == "end":
             self.message_received.emit(
                 OutputMessage(
                     msg_type="end",
                     content="",
                     session_id=session_id,
-                    is_complete=True,
+                    is_complete=False,
                     metadata=base_metadata,
                 )
             )

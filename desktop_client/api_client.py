@@ -1619,8 +1619,10 @@ class AstrBotApiClient:
         # 为每个请求创建独立的客户端（关键：避免消息错位）
         # 使用独立连接确保响应流不会混淆
         client = self._create_sse_client()
+        current_task = asyncio.current_task()
+        task_name = current_task.get_name() if current_task else "unknown"
         
-        logger.info(f"[SSE] 发送消息请求: session_id={session_id}, streaming={enable_streaming}")
+        logger.info(f"[SSE] 发送消息请求: session_id={session_id}, streaming={enable_streaming}, task={task_name}")
         logger.debug(f"[SSE] 请求体: {body}")
 
         try:
@@ -1631,7 +1633,7 @@ class AstrBotApiClient:
             # 强制不复用连接
             headers["Connection"] = "close"
 
-            logger.debug(f"[SSE] 开始发送请求到 {self.api_base}/chat/send")
+            logger.debug(f"[SSE] 开始发送请求到 {self.api_base}/chat/send, task={task_name}")
             async with client.stream(
                 "POST",
                 f"{self.api_base}/chat/send",
@@ -1648,7 +1650,7 @@ class AstrBotApiClient:
                     return
 
                 # 手动处理 SSE 流
-                logger.debug("[SSE] 开始处理 SSE 流")
+                logger.debug(f"[SSE] 开始处理 SSE 流, task={task_name}")
                 async for line in response.aiter_lines():
                     if not line:
                         continue
@@ -1687,6 +1689,7 @@ class AstrBotApiClient:
                             await asyncio.sleep(0)
 
                             if event.event_type == "end":
+                                logger.info(f"[SSE] 收到 end 事件，结束流: task={task_name}")
                                 return
                         except json.JSONDecodeError:
                             logger.warning(f"[SSE] JSON 解析失败: {data_str[:100]}")
@@ -1712,6 +1715,7 @@ class AstrBotApiClient:
         finally:
             # 确保客户端连接被关闭，释放资源
             try:
+                logger.debug(f"[SSE] 关闭 SSE 客户端: task={task_name}")
                 await client.aclose()
             except Exception:
                 pass
