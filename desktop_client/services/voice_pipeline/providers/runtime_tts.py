@@ -5,7 +5,6 @@ import time
 import uuid
 from pathlib import Path
 from typing import Optional
-import subprocess
 
 from ..base import BaseTTSProvider
 from ..models import TTSProviderConfig
@@ -41,11 +40,7 @@ class RuntimeTTSProvider(BaseTTSProvider):
         elif self._backend == 'edge_tts':
             self.logger.info('Runtime TTS backend=edge_tts 初始化成功')
         elif self._backend in ('sovits', 'gpt_sovits'):
-            if self.config.legacy_wrapper_enabled:
-                self.logger.warning("SoVITS legacy wrapper 模式已启用（deprecated 主链路）")
-                self._sovits_provider = LegacySoVITSWrapperProvider(self.config, self.logger, self.cache_dir)
-            else:
-                self._sovits_provider = SovitsTTSProvider(self.config, self.logger, self.cache_dir)
+            self._sovits_provider = SovitsTTSProvider(self.config, self.logger, self.cache_dir)
             await self._sovits_provider.warmup()
         elif self._backend in ('custom',):
             self.logger.warning(f"Runtime TTS backend '{self._backend}' 当前为扩展骨架")
@@ -67,7 +62,7 @@ class RuntimeTTSProvider(BaseTTSProvider):
         if not text.strip():
             return None
 
-        out = Path(output_path) if output_path else self.cache_dir / f"tts_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.{self.config.audio_format}"
+        out = Path(output_path) if output_path else self.cache_dir / f"tts_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.wav"
         out.parent.mkdir(parents=True, exist_ok=True)
 
         if self._backend == 'edge_tts':
@@ -147,89 +142,3 @@ class RuntimeTTSProvider(BaseTTSProvider):
                 pass
         if self._sovits_provider is not None:
             self._sovits_provider.stop()
-
-
-class LegacySoVITSWrapperProvider(BaseTTSProvider):
-    """SoVITS 旧 wrapper 兼容路径（subprocess 模式，默认禁用）。"""
-
-    def __init__(self, config: TTSProviderConfig, logger, cache_dir: Path):
-        self.config = config
-        self.logger = logger
-        self.cache_dir = cache_dir
-        self._process: subprocess.Popen | None = None
-
-    async def warmup(self) -> None:
-        runtime_script = getattr(self.config, "runtime_script", "") or ""
-        if runtime_script and not Path(runtime_script).exists():
-            raise FileNotFoundError(f"SoVITS runtime_script 不存在: {runtime_script}")
-        self.logger.info("SoVITS runtime provider 已就绪（wrapper 模式）")
-
-    async def shutdown(self) -> None:
-        self.stop()
-
-    async def synthesize_to_file(
-        self,
-        text: str,
-        output_path: str | None = None,
-        **kwargs,
-    ) -> str | None:
-        out = Path(output_path) if output_path else self.cache_dir / f"sovits_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.wav"
-        out.parent.mkdir(parents=True, exist_ok=True)
-
-        runtime_python = getattr(self.config, "runtime_python", "") or "python"
-        runtime_script = getattr(self.config, "runtime_script", "") or ""
-        if not runtime_script:
-            raise RuntimeError("SoVITS runtime 未配置 tts_runtime_script")
-
-        ref_audio = getattr(self.config, "ref_audio_path", "") or ""
-        prompt_text = getattr(self.config, "prompt_text", "") or ""
-        prompt_lang = getattr(self.config, "prompt_lang", "") or ""
-
-        cmd = [
-            runtime_python,
-            runtime_script,
-            "--text",
-            text,
-            "--output",
-            str(out),
-        ]
-        if self.config.model_path:
-            cmd += ["--model-dir", self.config.model_path]
-        if self.config.speaker:
-            cmd += ["--speaker", self.config.speaker]
-        if self.config.language:
-            cmd += ["--text-lang", self.config.language]
-        if ref_audio:
-            cmd += ["--ref-audio", ref_audio]
-        if prompt_text:
-            cmd += ["--prompt-text", prompt_text]
-        if prompt_lang:
-            cmd += ["--prompt-lang", prompt_lang]
-
-        self.logger.info(f"SoVITS synth start: {' '.join(cmd)}")
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        self._process = proc
-        stdout, stderr = await proc.communicate()
-        self._process = None
-
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"SoVITS runtime 执行失败: code={proc.returncode}, stderr={stderr.decode(errors='ignore')[:500]}"
-            )
-        if not out.exists():
-            raise RuntimeError("SoVITS runtime 未生成音频文件")
-        return str(out)
-
-    async def synthesize_bytes(self, text: str, **kwargs) -> bytes | None:
-        out = await self.synthesize_to_file(text)
-        if out:
-            return Path(out).read_bytes()
-        return None
-
-    def stop(self) -> None:
-        if self._process and self._process.returncode is None:
-            self._process.kill()

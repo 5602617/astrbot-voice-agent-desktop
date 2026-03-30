@@ -215,13 +215,6 @@ class VoiceConfig:
     tts_enabled: bool = True
     tts_provider_type: str = "none"  # none / http / runtime
     tts_api_url: str = ""
-    tts_method: str = "POST"  # GET / POST
-    tts_text_field: str = "text"
-    tts_response_mode: str = "audio_stream"  # audio_stream / json_url / json_file / json_base64
-    tts_response_key: str = "audio_url"
-    tts_headers_json: str = "{}"
-    tts_extra_params_json: str = "{}"
-    tts_audio_format: str = "wav"
     tts_runtime_backend: str = "qt"  # qt / pyttsx3 / edge_tts / gpt_sovits / custom
     tts_model_path: str = ""
     tts_speaker: str = ""
@@ -229,11 +222,7 @@ class VoiceConfig:
     tts_ref_audio_path: str = ""
     tts_prompt_text: str = ""
     tts_prompt_lang: str = ""
-    tts_runtime_python: str = "python"
-    tts_runtime_script: str = ""
     tts_timeout: int = 60
-    tts_fallback_to_pyttsx3: bool = False
-    tts_legacy_wrapper_enabled: bool = False
 
     # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）
     auto_start_local_asr: bool = False
@@ -453,10 +442,6 @@ class ClientConfig:
             self.voice.tts_model_path = str(tts_sovits)
         if not self.voice.tts_ref_audio_path:
             self.voice.tts_ref_audio_path = str(tts_ref / "default_ref.wav")
-        if not self.voice.tts_runtime_script:
-            self.voice.tts_runtime_script = str(
-                Path(__file__).parent.parent / "scripts" / "sovits_wrapper.py"
-            )
         if not self.voice.audio_cache_dir:
             self.voice.audio_cache_dir = str(self.get_config_dir() / "cache" / "audio")
 

@@ -703,6 +703,14 @@ class SettingsWindow(QWidget):
 
         self._enable_asr_hotkey = QCheckBox("启用 ASR 快捷键触发")
         voice_section.add_widget(self._enable_asr_hotkey)
+        self._asr_hotkey = QLineEdit()
+        self._asr_hotkey.setPlaceholderText("Alt+A")
+        voice_section.add_row("ASR 快捷键", self._asr_hotkey)
+        self._asr_timeout = QSpinBox()
+        self._asr_timeout.setRange(1, 300)
+        self._asr_timeout.setValue(30)
+        self._asr_timeout.setSuffix(" 秒")
+        voice_section.add_row("ASR Timeout", self._asr_timeout)
 
         self._enable_asr_button = QCheckBox("显示 ASR 按钮（聊天输入区）")
         voice_section.add_widget(self._enable_asr_button)
@@ -745,33 +753,6 @@ class SettingsWindow(QWidget):
         voice_section.add_row("TTS 语言", self._tts_language)
         self._tts_api_url = QLineEdit()
         voice_section.add_row("TTS API URL", self._tts_api_url)
-        self._tts_method = QComboBox()
-        self._tts_method.addItem("POST", "POST")
-        self._tts_method.addItem("GET", "GET")
-        voice_section.add_row("TTS Method", self._tts_method)
-        self._tts_text_field = QLineEdit()
-        self._tts_text_field.setPlaceholderText("text")
-        voice_section.add_row("TTS Text Field", self._tts_text_field)
-        self._tts_response_mode = QComboBox()
-        self._tts_response_mode.addItem("audio_stream", "audio_stream")
-        self._tts_response_mode.addItem("json_url", "json_url")
-        self._tts_response_mode.addItem("json_base64", "json_base64")
-        self._tts_response_mode.addItem("json_path", "json_path")
-        voice_section.add_row("TTS Response Mode", self._tts_response_mode)
-        self._tts_response_key = QLineEdit()
-        self._tts_response_key.setPlaceholderText("audio_url")
-        voice_section.add_row("TTS Response Key", self._tts_response_key)
-        self._tts_headers_json = QLineEdit()
-        self._tts_headers_json.setPlaceholderText("{\"Authorization\":\"Bearer ***\"}")
-        voice_section.add_row("TTS Headers JSON", self._tts_headers_json)
-        self._tts_extra_params_json = QLineEdit()
-        self._tts_extra_params_json.setPlaceholderText("{\"top_k\":5}")
-        voice_section.add_row("TTS Extra Params JSON", self._tts_extra_params_json)
-        self._tts_audio_format = QComboBox()
-        self._tts_audio_format.addItem("wav", "wav")
-        self._tts_audio_format.addItem("mp3", "mp3")
-        self._tts_audio_format.addItem("ogg", "ogg")
-        voice_section.add_row("TTS Audio Format", self._tts_audio_format)
         self._tts_timeout = QSpinBox()
         self._tts_timeout.setRange(1, 600)
         self._tts_timeout.setValue(60)
@@ -787,14 +768,6 @@ class SettingsWindow(QWidget):
         voice_section.add_row("SoVITS Prompt Lang", self._tts_prompt_lang)
         self._tts_speaker = QLineEdit()
         voice_section.add_row("SoVITS Speaker", self._tts_speaker)
-        self._tts_runtime_python = QLineEdit()
-        voice_section.add_row("SoVITS Python", self._tts_runtime_python)
-        self._tts_runtime_script = QLineEdit()
-        voice_section.add_row("SoVITS Wrapper", self._tts_runtime_script)
-        self._tts_fallback_to_pyttsx3 = QCheckBox("SoVITS 失败时允许 fallback 到 pyttsx3")
-        voice_section.add_widget(self._tts_fallback_to_pyttsx3)
-        self._tts_legacy_wrapper_enabled = QCheckBox("启用 legacy wrapper (subprocess)")
-        voice_section.add_widget(self._tts_legacy_wrapper_enabled)
 
         self._interrupt_tts_on_new_input = QCheckBox("新输入时中断 TTS")
         voice_section.add_widget(self._interrupt_tts_on_new_input)
@@ -2168,6 +2141,10 @@ class SettingsWindow(QWidget):
             self._enable_asr_hotkey.setChecked(
                 getattr(self.config.voice, "enable_asr_hotkey", True)
             )
+            self._asr_hotkey.setText(
+                getattr(self.config.voice, "asr_hotkey", "") or getattr(self.config.hotkeys, "toggle_asr", "Alt+A")
+            )
+            self._asr_timeout.setValue(int(getattr(self.config.voice, "asr_timeout", 30) or 30))
             self._enable_asr_button.setChecked(
                 getattr(self.config.voice, "enable_asr_button", True)
             )
@@ -2203,24 +2180,6 @@ class SettingsWindow(QWidget):
                     break
             self._tts_language.setText(getattr(self.config.voice, "tts_language", "zh"))
             self._tts_api_url.setText(getattr(self.config.voice, "tts_api_url", ""))
-            for i in range(self._tts_method.count()):
-                if self._tts_method.itemData(i) == getattr(self.config.voice, "tts_method", "POST"):
-                    self._tts_method.setCurrentIndex(i)
-                    break
-            self._tts_text_field.setText(getattr(self.config.voice, "tts_text_field", "text"))
-            for i in range(self._tts_response_mode.count()):
-                mode = getattr(self.config.voice, "tts_response_mode", "audio_stream")
-                mode = "json_path" if mode == "json_file" else mode
-                if self._tts_response_mode.itemData(i) == mode:
-                    self._tts_response_mode.setCurrentIndex(i)
-                    break
-            self._tts_response_key.setText(getattr(self.config.voice, "tts_response_key", "audio_url"))
-            self._tts_headers_json.setText(getattr(self.config.voice, "tts_headers_json", "{}"))
-            self._tts_extra_params_json.setText(getattr(self.config.voice, "tts_extra_params_json", "{}"))
-            for i in range(self._tts_audio_format.count()):
-                if self._tts_audio_format.itemData(i) == getattr(self.config.voice, "tts_audio_format", "wav"):
-                    self._tts_audio_format.setCurrentIndex(i)
-                    break
             self._tts_timeout.setValue(int(getattr(self.config.voice, "tts_timeout", 60) or 60))
             self._tts_model_path.setText(getattr(self.config.voice, "tts_model_path", ""))
             self._tts_ref_audio_path.setText(
@@ -2233,18 +2192,6 @@ class SettingsWindow(QWidget):
                 getattr(self.config.voice, "tts_prompt_lang", "")
             )
             self._tts_speaker.setText(getattr(self.config.voice, "tts_speaker", ""))
-            self._tts_runtime_python.setText(
-                getattr(self.config.voice, "tts_runtime_python", "python")
-            )
-            self._tts_runtime_script.setText(
-                getattr(self.config.voice, "tts_runtime_script", "")
-            )
-            self._tts_fallback_to_pyttsx3.setChecked(
-                bool(getattr(self.config.voice, "tts_fallback_to_pyttsx3", False))
-            )
-            self._tts_legacy_wrapper_enabled.setChecked(
-                bool(getattr(self.config.voice, "tts_legacy_wrapper_enabled", False))
-            )
             self._interrupt_tts_on_new_input.setChecked(
                 getattr(self.config.voice, "interrupt_tts_on_new_input", True)
             )
@@ -2651,6 +2598,8 @@ class SettingsWindow(QWidget):
                 "asr_enabled": self._asr_enabled.isChecked(),
                 "asr_provider_type": self._asr_provider_type.currentData(),
                 "enable_asr_hotkey": self._enable_asr_hotkey.isChecked(),
+                "asr_hotkey": self._asr_hotkey.text().strip() or "Alt+A",
+                "asr_timeout": self._asr_timeout.value(),
                 "enable_asr_button": self._enable_asr_button.isChecked(),
                 "asr_runtime_backend": self._asr_runtime_backend.currentData(),
                 "asr_language": self._asr_language.text().strip(),
@@ -2661,23 +2610,12 @@ class SettingsWindow(QWidget):
                 "tts_runtime_backend": self._tts_runtime_backend.currentData(),
                 "tts_language": self._tts_language.text().strip(),
                 "tts_api_url": self._tts_api_url.text().strip(),
-                "tts_method": self._tts_method.currentData(),
-                "tts_text_field": self._tts_text_field.text().strip() or "text",
-                "tts_response_mode": self._tts_response_mode.currentData(),
-                "tts_response_key": self._tts_response_key.text().strip() or "audio_url",
-                "tts_headers_json": self._tts_headers_json.text().strip() or "{}",
-                "tts_extra_params_json": self._tts_extra_params_json.text().strip() or "{}",
-                "tts_audio_format": self._tts_audio_format.currentData(),
                 "tts_timeout": self._tts_timeout.value(),
                 "tts_model_path": self._tts_model_path.text().strip(),
                 "tts_ref_audio_path": self._tts_ref_audio_path.text().strip(),
                 "tts_prompt_text": self._tts_prompt_text.text().strip(),
                 "tts_prompt_lang": self._tts_prompt_lang.text().strip(),
                 "tts_speaker": self._tts_speaker.text().strip(),
-                "tts_runtime_python": self._tts_runtime_python.text().strip(),
-                "tts_runtime_script": self._tts_runtime_script.text().strip(),
-                "tts_fallback_to_pyttsx3": self._tts_fallback_to_pyttsx3.isChecked(),
-                "tts_legacy_wrapper_enabled": self._tts_legacy_wrapper_enabled.isChecked(),
                 "interrupt_tts_on_new_input": self._interrupt_tts_on_new_input.isChecked(),
                 "interrupt_asr_on_new_input": self._interrupt_asr_on_new_input.isChecked(),
                 "auto_play_tts": self._auto_play_tts.isChecked(),
@@ -2783,6 +2721,9 @@ class SettingsWindow(QWidget):
             self.config.voice.asr_enabled = settings["voice"]["asr_enabled"]
             self.config.voice.asr_provider_type = settings["voice"]["asr_provider_type"]
             self.config.voice.enable_asr_hotkey = settings["voice"]["enable_asr_hotkey"]
+            self.config.voice.asr_hotkey = settings["voice"]["asr_hotkey"]
+            self.config.voice.asr_timeout = settings["voice"]["asr_timeout"]
+            self.config.hotkeys.toggle_asr = settings["voice"]["asr_hotkey"]
             self.config.voice.enable_asr_button = settings["voice"]["enable_asr_button"]
             self.config.voice.asr_runtime_backend = settings["voice"]["asr_runtime_backend"]
             self.config.voice.asr_language = settings["voice"]["asr_language"]
@@ -2793,23 +2734,12 @@ class SettingsWindow(QWidget):
             self.config.voice.tts_runtime_backend = settings["voice"]["tts_runtime_backend"]
             self.config.voice.tts_language = settings["voice"]["tts_language"]
             self.config.voice.tts_api_url = settings["voice"]["tts_api_url"]
-            self.config.voice.tts_method = settings["voice"]["tts_method"]
-            self.config.voice.tts_text_field = settings["voice"]["tts_text_field"]
-            self.config.voice.tts_response_mode = settings["voice"]["tts_response_mode"]
-            self.config.voice.tts_response_key = settings["voice"]["tts_response_key"]
-            self.config.voice.tts_headers_json = settings["voice"]["tts_headers_json"]
-            self.config.voice.tts_extra_params_json = settings["voice"]["tts_extra_params_json"]
-            self.config.voice.tts_audio_format = settings["voice"]["tts_audio_format"]
             self.config.voice.tts_timeout = settings["voice"]["tts_timeout"]
             self.config.voice.tts_model_path = settings["voice"]["tts_model_path"]
             self.config.voice.tts_ref_audio_path = settings["voice"]["tts_ref_audio_path"]
             self.config.voice.tts_prompt_text = settings["voice"]["tts_prompt_text"]
             self.config.voice.tts_prompt_lang = settings["voice"]["tts_prompt_lang"]
             self.config.voice.tts_speaker = settings["voice"]["tts_speaker"]
-            self.config.voice.tts_runtime_python = settings["voice"]["tts_runtime_python"]
-            self.config.voice.tts_runtime_script = settings["voice"]["tts_runtime_script"]
-            self.config.voice.tts_fallback_to_pyttsx3 = settings["voice"]["tts_fallback_to_pyttsx3"]
-            self.config.voice.tts_legacy_wrapper_enabled = settings["voice"]["tts_legacy_wrapper_enabled"]
             self.config.voice.interrupt_tts_on_new_input = settings["voice"]["interrupt_tts_on_new_input"]
             self.config.voice.interrupt_asr_on_new_input = settings["voice"]["interrupt_asr_on_new_input"]
             self.config.voice.auto_play_tts = settings["voice"]["auto_play_tts"]

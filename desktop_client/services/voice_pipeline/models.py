@@ -31,13 +31,10 @@ class TTSProviderConfig:
     enabled: bool = False
     provider_type: str = "none"  # none / http / runtime
     api_url: str = ""
-    method: str = "POST"  # GET / POST
-    text_field: str = "text"
-    response_mode: str = "audio_stream"  # audio_stream / json_url / json_file(json_path) / json_base64
-    response_key: str = "audio_url"
-    headers_json: str = "{}"
-    extra_params_json: str = "{}"
-    audio_format: str = "wav"
+    method: str = "POST"  # 兼容 http provider
+    text_field: str = "text"  # 兼容 http provider
+    response_mode: str = "audio_stream"  # 兼容 http provider
+    response_key: str = "audio_url"  # 兼容 http provider
     runtime_backend: str = "qt"  # qt / pyttsx3 / edge_tts / gpt_sovits / custom
     model_path: str = ""
     speaker: str = ""
@@ -45,11 +42,10 @@ class TTSProviderConfig:
     ref_audio_path: str = ""
     prompt_text: str = ""
     prompt_lang: str = ""
-    runtime_python: str = "python"
-    runtime_script: str = ""
     timeout: int = 60
-    fallback_to_pyttsx3: bool = False
-    legacy_wrapper_enabled: bool = False
+    headers_json: str = "{}"  # 兼容旧配置：仅用于 HTTP headers
+    extra_params_json: str = "{}"  # 兼容 http provider
+    audio_format: str = "wav"
 
 
 @dataclass
@@ -118,9 +114,6 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
         text_field=str(getattr(voice_cfg, "tts_text_field", "text") or "text"),
         response_mode=str(getattr(voice_cfg, "tts_response_mode", "audio_stream") or "audio_stream"),
         response_key=str(getattr(voice_cfg, "tts_response_key", "audio_url") or "audio_url"),
-        headers_json=str(getattr(voice_cfg, "tts_headers_json", "{}") or "{}"),
-        extra_params_json=str(getattr(voice_cfg, "tts_extra_params_json", "{}") or "{}"),
-        audio_format=str(getattr(voice_cfg, "tts_audio_format", "wav") or "wav"),
         runtime_backend=str(getattr(voice_cfg, "tts_runtime_backend", "qt") or "qt"),
         model_path=str(getattr(voice_cfg, "tts_model_path", "") or ""),
         speaker=str(getattr(voice_cfg, "tts_speaker", "") or ""),
@@ -128,11 +121,10 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
         ref_audio_path=str(getattr(voice_cfg, "tts_ref_audio_path", "") or ""),
         prompt_text=str(getattr(voice_cfg, "tts_prompt_text", "") or ""),
         prompt_lang=str(getattr(voice_cfg, "tts_prompt_lang", "") or ""),
-        runtime_python=str(getattr(voice_cfg, "tts_runtime_python", "python") or "python"),
-        runtime_script=str(getattr(voice_cfg, "tts_runtime_script", "") or ""),
         timeout=int(getattr(voice_cfg, "tts_timeout", 60) or 60),
-        fallback_to_pyttsx3=bool(getattr(voice_cfg, "tts_fallback_to_pyttsx3", False)),
-        legacy_wrapper_enabled=bool(getattr(voice_cfg, "tts_legacy_wrapper_enabled", False)),
+        headers_json=str(getattr(voice_cfg, "tts_headers_json", "{}") or "{}"),
+        extra_params_json=str(getattr(voice_cfg, "tts_extra_params_json", "{}") or "{}"),
+        audio_format=str(getattr(voice_cfg, "tts_audio_format", "wav") or "wav"),
     )
 
     pipe = PipelineConfig(
@@ -150,4 +142,6 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
 
 
 def parse_headers_and_params(cfg: ASRProviderConfig | TTSProviderConfig) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    return _parse_json_map(cfg.headers_json), _parse_json_map(cfg.extra_params_json)
+    headers_raw = getattr(cfg, "headers_json", "{}")
+    params_raw = getattr(cfg, "extra_params_json", "{}")
+    return _parse_json_map(headers_raw), _parse_json_map(params_raw)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import time
@@ -12,35 +11,55 @@ import httpx
 
 from ..base import BaseTTSProvider
 from ..models import TTSProviderConfig
+from .local_sovits_runtime import LocalSovitsRuntime
 
 
-def _extract_json_key_path(data: dict, key_path: str):
-    cur = data
-    for part in key_path.split("."):
-        if isinstance(cur, dict):
-            cur = cur.get(part)
-        else:
-            return None
-    return cur
+def _extract_json_value(data: dict, candidate_keys: tuple[str, ...]) -> str:
+    for key in candidate_keys:
+        cur = data
+        ok = True
+        for part in key.split("."):
+            if isinstance(cur, dict) and part in cur:
+                cur = cur[part]
+            else:
+                ok = False
+                break
+        if ok and cur:
+            return str(cur).strip()
+    return ""
 
 
 class SovitsTTSProvider(BaseTTSProvider):
-    """内部 SoVITS/GPT-SoVITS runtime provider（主路径为 HTTP API）。"""
+    """SoVITS/GPT-SoVITS 内部 runtime provider（本地优先，HTTP 兼容）。"""
 
     def __init__(self, config: TTSProviderConfig, logger, cache_dir: Path):
         self.config = config
         self.logger = logger
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._local_runtime: LocalSovitsRuntime | None = None
+        self._use_local = False
 
     async def warmup(self) -> None:
-        if self.config.api_url:
-            self.logger.info("SoVITS runtime 初始化: mode=http api=%s", self.config.api_url)
+        model_dir = (self.config.model_path or "").strip()
+        api_url = (self.config.api_url or "").strip()
+        if model_dir:
+            self._use_local = True
+            self._local_runtime = LocalSovitsRuntime(
+                model_dir=model_dir,
+                logger=self.logger,
+                timeout=int(self.config.timeout or 60),
+            )
+            await self._local_runtime.warmup()
+            self.logger.info("SoVITS provider warmup: mode=local model_dir=%s", model_dir)
             return
-        if self.config.model_path:
-            self.logger.info("SoVITS runtime 初始化: mode=python_api(预留扩展)")
+
+        if api_url:
+            self._use_local = False
+            self.logger.info("SoVITS provider warmup: mode=http api_url=%s", api_url)
             return
-        raise RuntimeError("SoVITS 初始化失败：未配置 tts_api_url（HTTP）或 tts_model_path（Python API 预留）")
+
+        raise RuntimeError("SoVITS 初始化失败：请配置 tts_model_path（本地）或 tts_api_url（HTTP兼容）")
 
     async def synthesize_to_file(
         self,
@@ -51,157 +70,97 @@ class SovitsTTSProvider(BaseTTSProvider):
         if not text.strip():
             return None
 
-        out = Path(output_path) if output_path else self.cache_dir / (
-            f"sovits_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.{self.config.audio_format or 'wav'}"
-        )
+        out = Path(output_path) if output_path else self.cache_dir / f"sovits_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.wav"
         out.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            if self.config.api_url:
-                audio = await self._request_audio_http(text)
-            else:
-                audio = await self._request_audio_python_api(text)
-        except Exception as exc:
-            if self.config.fallback_to_pyttsx3:
-                self.logger.warning("SoVITS HTTP/PythonAPI 失败，回退 pyttsx3: %s", exc)
-                await self._fallback_pyttsx3(text, out)
-                return str(out)
-            raise
-
+        audio = await self.synthesize_bytes(text, **kwargs)
         if not audio:
-            raise RuntimeError("SoVITS 未返回有效音频数据")
+            raise RuntimeError("SoVITS 未生成音频数据")
         out.write_bytes(audio)
-        self.logger.info("SoVITS 生成音频: %s (bytes=%s)", out, len(audio))
+        self.logger.info("SoVITS 音频已写入: %s", out)
         return str(out)
 
     async def synthesize_bytes(self, text: str, **kwargs) -> bytes | None:
-        path = await self.synthesize_to_file(text)
-        if not path:
-            return None
-        return Path(path).read_bytes()
+        if self._local_runtime is None and not (self.config.api_url or "").strip():
+            await self.warmup()
 
-    async def _request_audio_http(self, text: str) -> bytes:
-        headers = self._parse_headers()
-        payload = self._build_payload(text)
-        timeout = httpx.Timeout(float(max(1, self.config.timeout)))
+        if (self.config.model_path or "").strip():
+            if self._local_runtime is None:
+                await self.warmup()
+            if self._local_runtime is None:
+                raise RuntimeError("SoVITS 本地运行时初始化失败")
+            self.logger.info("SoVITS synth: mode=local")
+            return await self._local_runtime.synthesize(
+                text,
+                language=self.config.language or "zh",
+                ref_audio_path=self.config.ref_audio_path or "",
+                prompt_text=self.config.prompt_text or "",
+                prompt_lang=self.config.prompt_lang or "",
+                speaker=self.config.speaker or "",
+            )
 
-        self.logger.info(
-            "SoVITS HTTP 请求: url=%s method=%s response_mode=%s headers=%s",
-            self.config.api_url,
-            self.config.method,
-            self.config.response_mode,
-            self._mask_headers_for_log(headers),
-        )
+        self.logger.info("SoVITS synth: mode=http")
+        return await self._synthesize_http(text)
 
+    async def _synthesize_http(self, text: str) -> bytes:
+        timeout = httpx.Timeout(float(max(1, int(self.config.timeout or 60))))
+        payload = {
+            "text": text,
+            "text_lang": self.config.language or "zh",
+        }
+        if self.config.prompt_text:
+            payload["prompt_text"] = self.config.prompt_text
+        if self.config.prompt_lang:
+            payload["prompt_lang"] = self.config.prompt_lang
+        if self.config.ref_audio_path:
+            payload["ref_audio_path"] = self.config.ref_audio_path
+        if self.config.speaker:
+            payload["speaker"] = self.config.speaker
+
+        headers = self._parse_headers_json_compat()
+        self.logger.info("SoVITS HTTP 请求: url=%s", self.config.api_url)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            if self.config.method == "GET":
-                resp = await client.get(self.config.api_url, params=payload, headers=headers)
-            else:
-                resp = await client.post(self.config.api_url, json=payload, headers=headers)
+            resp = await client.post(self.config.api_url, json=payload, headers=headers)
             resp.raise_for_status()
-            return await self._handle_response_audio(resp, client)
 
-    async def _request_audio_python_api(self, text: str) -> bytes:
-        raise NotImplementedError("SoVITS Python API 模式尚未实现，请先使用 tts_api_url")
+            content_type = (resp.headers.get("content-type") or "").lower()
+            if "json" not in content_type:
+                return resp.content
 
-    def _parse_headers(self) -> dict:
-        raw = self.config.headers_json or "{}"
+            data = resp.json()
+            b64 = _extract_json_value(data, ("audio_base64", "data.audio_base64"))
+            if b64:
+                return base64.b64decode(b64)
+
+            audio_url = _extract_json_value(data, ("audio_url", "data.audio_url", "url", "data.url"))
+            if audio_url:
+                url = audio_url if audio_url.startswith("http") else urljoin(self.config.api_url, audio_url)
+                dl = await client.get(url)
+                dl.raise_for_status()
+                return dl.content
+
+            audio_path = _extract_json_value(data, ("audio_path", "data.audio_path", "path", "data.path"))
+            if audio_path:
+                p = Path(audio_path)
+                if not p.exists():
+                    raise FileNotFoundError(f"SoVITS HTTP 返回的音频路径不存在: {audio_path}")
+                return p.read_bytes()
+
+        raise RuntimeError("SoVITS HTTP 返回 JSON 但未包含可识别音频字段(audio_base64/audio_url/audio_path)")
+
+    def _parse_headers_json_compat(self) -> dict:
+        raw = getattr(self.config, "headers_json", "") or ""
+        if not raw.strip():
+            return {}
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            self.logger.error("tts_headers_json 非法 JSON: %s", exc)
-            raise ValueError(f"tts_headers_json 非法 JSON: {exc}") from exc
+        except Exception as exc:
+            self.logger.warning("兼容字段 tts_headers_json 非法，已忽略: %s", exc)
+            return {}
         if not isinstance(data, dict):
-            raise ValueError("tts_headers_json 必须是 JSON object")
-        return {str(k): str(v) for k, v in data.items()}
-
-    def _mask_headers_for_log(self, headers: dict) -> dict:
-        masked = {}
-        for k, v in headers.items():
-            lk = str(k).lower()
-            if any(token in lk for token in ("authorization", "token", "api-key", "apikey", "key")):
-                sv = str(v)
-                masked[k] = f"{sv[:4]}***" if len(sv) > 4 else "***"
-            else:
-                masked[k] = v
-        return masked
-
-    def _build_payload(self, text: str) -> dict:
-        payload: dict = {}
-        raw_extra = self.config.extra_params_json or "{}"
-        if raw_extra.strip():
-            try:
-                extra = json.loads(raw_extra)
-            except json.JSONDecodeError as exc:
-                self.logger.error("tts_extra_params_json 非法 JSON: %s", exc)
-                raise ValueError(f"tts_extra_params_json 非法 JSON: {exc}") from exc
-            if not isinstance(extra, dict):
-                raise ValueError("tts_extra_params_json 必须是 JSON object")
-            payload.update(extra)
-
-        payload[self.config.text_field or "text"] = text
-        if self.config.prompt_text:
-            payload.setdefault("prompt_text", self.config.prompt_text)
-        if self.config.prompt_lang:
-            payload.setdefault("prompt_lang", self.config.prompt_lang)
-        if self.config.ref_audio_path:
-            payload.setdefault("ref_audio_path", self.config.ref_audio_path)
-        if self.config.model_path:
-            payload.setdefault("model_path", self.config.model_path)
-        if self.config.speaker:
-            payload.setdefault("speaker", self.config.speaker)
-        if self.config.language:
-            payload.setdefault("language", self.config.language)
-        return payload
-
-    async def _handle_response_audio(self, resp: httpx.Response, client: httpx.AsyncClient) -> bytes:
-        mode = (self.config.response_mode or "audio_stream").lower()
-        if mode == "audio_stream":
-            return resp.content
-
-        data = resp.json()
-        if mode == "json_url":
-            return await self._handle_json_url_response(data, client)
-        if mode == "json_base64":
-            return self._handle_json_base64_response(data)
-        if mode in ("json_file", "json_path"):
-            return self._handle_json_path_response(data)
-        raise ValueError(f"不支持的 SoVITS response_mode: {mode}")
-
-    async def _handle_json_url_response(self, data: dict, client: httpx.AsyncClient) -> bytes:
-        key = self.config.response_key or "audio_url"
-        raw_url = str(_extract_json_key_path(data, key) or "").strip()
-        if not raw_url:
-            raise ValueError(f"SoVITS json_url 模式未找到响应字段: {key}")
-        target_url = raw_url if raw_url.startswith("http") else urljoin(self.config.api_url, raw_url)
-        dl = await client.get(target_url)
-        dl.raise_for_status()
-        return dl.content
-
-    def _handle_json_base64_response(self, data: dict) -> bytes:
-        key = self.config.response_key or "audio_base64"
-        b64 = str(_extract_json_key_path(data, key) or "").strip()
-        if not b64:
-            raise ValueError(f"SoVITS json_base64 模式未找到响应字段: {key}")
-        return base64.b64decode(b64)
-
-    def _handle_json_path_response(self, data: dict) -> bytes:
-        key = self.config.response_key or "audio_path"
-        file_path = str(_extract_json_key_path(data, key) or "").strip()
-        if not file_path:
-            raise ValueError(f"SoVITS json_path 模式未找到响应字段: {key}")
-        p = Path(file_path)
-        if not p.exists():
-            raise FileNotFoundError(f"SoVITS 返回文件不存在: {file_path}")
-        return p.read_bytes()
-
-    async def _fallback_pyttsx3(self, text: str, out: Path) -> None:
-        def _run() -> None:
-            import pyttsx3
-
-            engine = pyttsx3.init()
-            engine.save_to_file(text, str(out))
-            engine.runAndWait()
-
-        await asyncio.to_thread(_run)
+            self.logger.warning("兼容字段 tts_headers_json 非对象，已忽略")
+            return {}
+        safe = {}
+        for k, v in data.items():
+            safe[str(k)] = str(v)
+        return safe
 
