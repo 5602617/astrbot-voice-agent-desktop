@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
+from contextlib import contextmanager
 import os
 import tempfile
 from pathlib import Path
@@ -19,6 +21,7 @@ class GenieTTSRuntime(BaseTTSProvider):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._genie = None
         self._initialized = False
+        self._character = ""
 
     def validate_config(self) -> list[str]:
         errs: list[str] = []
@@ -59,8 +62,9 @@ class GenieTTSRuntime(BaseTTSProvider):
         if errs:
             raise RuntimeError("; ".join(errs))
 
-        if getattr(self.config, "use_genie_data_dir", False) and getattr(self.config, "genie_data_dir", ""):
-            os.environ["GENIE_DATA_DIR"] = getattr(self.config, "genie_data_dir")
+        genie_data_dir = self._resolve_genie_data_dir()
+        os.environ["GENIE_DATA_DIR"] = str(genie_data_dir)
+        self._ensure_genie_data_ready(genie_data_dir)
 
         try:
             import genie_tts as genie  # type: ignore
@@ -71,36 +75,74 @@ class GenieTTSRuntime(BaseTTSProvider):
         await asyncio.to_thread(self._initialize_character)
         self._initialized = True
 
+    def _resolve_genie_data_dir(self) -> Path:
+        configured = (getattr(self.config, "genie_data_dir", "") or "").strip()
+        if configured:
+            return Path(configured).expanduser().resolve()
+
+        env_value = (os.environ.get("GENIE_DATA_DIR") or "").strip()
+        if env_value:
+            return Path(env_value).expanduser().resolve()
+
+        return (Path.cwd() / "GenieData").resolve()
+
+    def _ensure_genie_data_ready(self, genie_data_dir: Path) -> None:
+        if genie_data_dir.exists() and genie_data_dir.is_dir():
+            return
+        raise RuntimeError(
+            "Genie-TTS 缺少 GenieData 资源目录，已禁用交互式下载。\n"
+            f"缺失目录: {genie_data_dir}\n"
+            "请先手动准备 GenieData 后重试。可在设置中填写 GENIE_DATA_DIR，"
+            "或将 GenieData 放到当前工作目录。"
+        )
+
+    @contextmanager
+    def _disable_stdin_prompt(self):
+        original_input = builtins.input
+
+        def _no_prompt_input(prompt: str = "") -> str:
+            raise RuntimeError(
+                "检测到 Genie-TTS 尝试进行命令行交互(input)。"
+                "桌面客户端已禁用交互式下载，请先手动准备 GenieData。"
+            )
+
+        builtins.input = _no_prompt_input
+        try:
+            yield
+        finally:
+            builtins.input = original_input
+
     def _initialize_character(self) -> None:
         assert self._genie is not None
-        mode = getattr(self.config, "genie_mode", getattr(self.config, "mode", "predefined"))
-        if mode == "predefined":
-            cname = getattr(
-                self.config,
-                "genie_predefined_voice",
-                getattr(self.config, "genie_predefined_character_name", getattr(self.config, "predefined_character_name", "")),
-            )
-            self._genie.load_predefined_character(cname)
-            self._character = cname
-        else:
-            character_name = getattr(self.config, "genie_character_name", getattr(self.config, "character_name", ""))
-            model_dir = getattr(self.config, "genie_model_dir", getattr(self.config, "onnx_model_dir", ""))
-            language = getattr(self.config, "genie_language", getattr(self.config, "language", "zh"))
-            self._genie.load_character(
-                character_name=character_name,
-                onnx_model_dir=model_dir,
-                language=language,
-            )
-            self._character = character_name
+        with self._disable_stdin_prompt():
+            mode = getattr(self.config, "genie_mode", getattr(self.config, "mode", "predefined"))
+            if mode == "predefined":
+                cname = getattr(
+                    self.config,
+                    "genie_predefined_voice",
+                    getattr(self.config, "genie_predefined_character_name", getattr(self.config, "predefined_character_name", "")),
+                )
+                self._genie.load_predefined_character(cname)
+                self._character = cname
+            else:
+                character_name = getattr(self.config, "genie_character_name", getattr(self.config, "character_name", ""))
+                model_dir = getattr(self.config, "genie_model_dir", getattr(self.config, "onnx_model_dir", ""))
+                language = getattr(self.config, "genie_language", getattr(self.config, "language", "zh"))
+                self._genie.load_character(
+                    character_name=character_name,
+                    onnx_model_dir=model_dir,
+                    language=language,
+                )
+                self._character = character_name
 
-        ref_audio = getattr(self.config, "genie_reference_audio_path", getattr(self.config, "reference_audio_path", ""))
-        ref_text = getattr(self.config, "genie_reference_audio_text", getattr(self.config, "reference_audio_text", ""))
-        if ref_audio and ref_text:
-            self._genie.set_reference_audio(
-                character_name=self._character,
-                audio_path=ref_audio,
-                audio_text=ref_text,
-            )
+            ref_audio = getattr(self.config, "genie_reference_audio_path", getattr(self.config, "reference_audio_path", ""))
+            ref_text = getattr(self.config, "genie_reference_audio_text", getattr(self.config, "reference_audio_text", ""))
+            if ref_audio and ref_text:
+                self._genie.set_reference_audio(
+                    character_name=self._character,
+                    audio_path=ref_audio,
+                    audio_text=ref_text,
+                )
 
     async def synthesize_to_file(self, text: str, output_path: str | None = None, **kwargs) -> str | None:
         if not text.strip():

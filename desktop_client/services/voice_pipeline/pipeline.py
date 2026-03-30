@@ -12,6 +12,7 @@ from ...config import ClientConfig
 from .models import build_runtime_config, VoiceRuntimeConfig
 from .registry import create_asr_provider, create_tts_provider
 from .turn_manager import VoiceTurnManager, VoiceTurnState
+from .providers.noop import NoopTTSProvider
 
 
 class VoicePipelineRuntime:
@@ -48,7 +49,12 @@ class VoicePipelineRuntime:
             cache_dir=self.runtime_config.pipeline.audio_cache_dir,
         )
         await self.asr_provider.warmup()
-        await self.tts_provider.warmup()
+        try:
+            await self.tts_provider.warmup()
+        except Exception as exc:
+            self.logger.error(f"本地 TTS 初始化失败，已自动降级为禁用状态: {exc}")
+            self.runtime_config.tts.enabled = False
+            self.tts_provider = NoopTTSProvider()
         self.logger.info(
             f"VoicePipeline 重载完成: asr={self.runtime_config.asr.provider_type}/{self.runtime_config.asr.runtime_backend}, "
             f"tts={self.runtime_config.tts.provider_type}/{self.runtime_config.tts.runtime_backend}, "
