@@ -174,3 +174,28 @@ MIT License
 - 本地 ASR 文本 -> 桌面端发送到 Cloud AstrBot
 - Cloud AstrBot 返回最终文本 -> 本地 TTS 播放（若启用）
 - 即使本地 TTS 失败，也不会影响文本回复显示
+
+### 对接你现有 FastAPI ASR/TTS 服务
+
+如果你本地已经有类似下面接口：
+- `POST /asr/wav`（上传 wav 返回 `{"text": "..."}`）
+- `WS /ws`（发 PCM chunk + `mic-audio-end` 触发识别）
+
+可以直接使用：`desktop_client/voice_models/fastapi_voice_service_adapter.py`
+
+- `FastAPIHttpASRAdapter`：对接 `/asr/wav`
+- `FastAPIWsASRAdapter`：对接 `/ws`
+- `FastAPITTSAdapter`：默认对接 `POST /tts`（按你服务端实际返回结构可自行调整）
+
+配置示例：
+
+```json
+{
+  "voice": {
+    "enable_tts": true,
+    "auto_start_local_asr": true,
+    "local_asr_adapter": "desktop_client.voice_models.fastapi_voice_service_adapter:FastAPIWsASRAdapter",
+    "local_tts_adapter": "desktop_client.voice_models.fastapi_voice_service_adapter:FastAPITTSAdapter"
+  }
+}
+```

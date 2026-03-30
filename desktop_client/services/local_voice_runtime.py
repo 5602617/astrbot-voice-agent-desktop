@@ -202,7 +202,11 @@ class LocalVoiceRuntime:
             self._asr_task = None
 
         if self._asr_adapter is not None:
-            asyncio.create_task(self._asr_adapter.stop())
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._asr_adapter.stop())
+            except RuntimeError:
+                pass
 
         if self._tts_adapter is not None:
             try:
