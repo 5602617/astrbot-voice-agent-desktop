@@ -3,6 +3,7 @@ from .http_asr import HTTPASRProvider
 from .http_tts import HTTPTTSProvider
 from .runtime_asr import RuntimeASRProvider
 from .runtime_tts import RuntimeTTSProvider
+from .sherpa_asr import SherpaASRProvider
 
 __all__ = [
     'NoopASRProvider',
@@ -11,4 +12,5 @@ __all__ = [
     'HTTPTTSProvider',
     'RuntimeASRProvider',
     'RuntimeTTSProvider',
+    'SherpaASRProvider',
 ]

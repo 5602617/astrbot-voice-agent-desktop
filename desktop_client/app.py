@@ -28,6 +28,7 @@ from .config import ClientConfig, load_config, save_config
 from .bridge import MessageBridge, InputMessage
 from .services.proactive_dialog import ProactiveDialogService
 from .services import get_chat_history_manager, UpdateService
+from .services.audio_recorder import AudioRecorderService, AudioRecorderError
 from .handlers import (
     MessageHandler,
     ScreenshotHandler,
@@ -88,6 +89,8 @@ class DesktopClientApp(QObject):
 
         # 更新服务
         self._update_service = None
+        self._audio_recorder = AudioRecorderService()
+        self._asr_recording = False
 
         # 重连计时器
         self._reconnect_timer: Optional[QTimer] = None
@@ -487,6 +490,7 @@ class DesktopClientApp(QObject):
         )
         self._floating_ball.message_sent.connect(self._on_message_sent)
         self._floating_ball.image_sent.connect(self._on_image_sent)
+        self._floating_ball.asr_toggle_requested.connect(self._toggle_asr_recording)
         self._floating_ball.show()
         logger.debug("悬浮球创建完成并显示")
 
@@ -595,6 +599,7 @@ class DesktopClientApp(QObject):
         self._hotkey_manager.toggle_ball_triggered.connect(self._toggle_floating_ball)
         self._hotkey_manager.quick_ask_triggered.connect(self._show_quick_ask)
         self._hotkey_manager.cycle_theme_triggered.connect(self._cycle_theme)
+        self._hotkey_manager.toggle_asr_triggered.connect(self._toggle_asr_recording)
 
     # ==================== 事件处理 ====================
 
@@ -644,6 +649,35 @@ class DesktopClientApp(QObject):
         from .gui.themes import theme_manager
 
         theme_manager.cycle_theme()
+
+    def _toggle_asr_recording(self):
+        """开始/停止本地 ASR 录音并提交到语音流水线。"""
+        if not self._floating_ball:
+            return
+
+        if not self.config.voice.enable_asr_hotkey:
+            self._floating_ball.show_system_message("ASR 快捷键已禁用")
+            return
+
+        if not self._asr_recording:
+            try:
+                self._audio_recorder.start()
+                self._asr_recording = True
+                self._floating_ball.show_system_message("🎙️ 开始录音，再次触发结束")
+            except AudioRecorderError as e:
+                self._floating_ball.show_system_message(f"录音不可用: {e}")
+            except Exception as e:
+                self._floating_ball.show_system_message(f"录音启动失败: {e}")
+            return
+
+        try:
+            audio_path = self._audio_recorder.stop()
+            self._asr_recording = False
+            self._floating_ball.show_system_message("🧠 正在识别语音...")
+            asyncio.ensure_future(self.submit_local_asr_audio_file(audio_path))
+        except Exception as e:
+            self._asr_recording = False
+            self._floating_ball.show_system_message(f"录音停止失败: {e}")
 
     @asyncSlot(str)
     async def _on_message_sent(self, message: str):

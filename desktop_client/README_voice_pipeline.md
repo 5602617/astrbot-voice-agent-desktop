@@ -147,12 +147,13 @@ desktop_client/services/voice_pipeline/
 ## 8. 内部 runtime 模式说明
 
 ### ASR Runtime
-- 已完整实现：`faster_whisper`
-- 扩展骨架：`sherpa_onnx`, `funasr`, `custom`
+- 已完整实现：`faster_whisper`, `sherpa_onnx`（优先尝试 `backend.asr.sherpa_asr.SherpaASR`）
+- 扩展骨架：`funasr`, `custom`
 
 ### TTS Runtime
 - 已完整可运行：`qt`（实时说话）、`pyttsx3`（导出文件）、`edge_tts`（导出文件）
-- 扩展骨架：`gpt_sovits`, `custom`
+- SoVITS Runtime：`sovits` / `gpt_sovits`（wrapper 模式，可运行，需外部脚本）
+- 扩展骨架：`custom`
 
 ---
 
@@ -178,6 +179,45 @@ desktop_client/services/voice_pipeline/
    - ASR 结果长度
    - TTS 输出路径
 
+### 界面触发 ASR
+
+- 聊天输入区新增 🎤 按钮（可由 `enable_asr_button` 控制）
+- 快捷键新增 `toggle_asr`（默认 `Ctrl+Shift+R`，可由 `enable_asr_hotkey` 控制）
+- 第一次触发开始录音，第二次触发停止并自动提交识别
+
+### 配置 SherpaASR Runtime
+
+```json
+{
+  "voice": {
+    "enable_voice_pipeline": true,
+    "asr_enabled": true,
+    "asr_provider_type": "runtime",
+    "asr_runtime_backend": "sherpa_onnx",
+    "asr_model_path": "models/sherpa",
+    "asr_tokens_path": "models/sherpa/tokens.txt"
+  }
+}
+```
+
+### 配置 SoVITS Runtime
+
+```json
+{
+  "voice": {
+    "tts_enabled": true,
+    "tts_provider_type": "runtime",
+    "tts_runtime_backend": "sovits",
+    "tts_runtime_python": "python",
+    "tts_runtime_script": "scripts/sovits_wrapper.py",
+    "tts_model_path": "models/sovits",
+    "tts_ref_audio_path": "assets/ref.wav",
+    "tts_prompt_text": "示例提示词",
+    "tts_prompt_lang": "zh"
+  }
+}
+```
+
 ---
 
 ## 11. 常见问题排查
@@ -185,16 +225,29 @@ desktop_client/services/voice_pipeline/
 1. `faster_whisper` 导入失败
    - 安装依赖：`pip install faster-whisper`
 
-2. HTTP ASR 返回空文本
+2. `sherpa_onnx` 初始化失败
+   - 检查 `backend.asr.sherpa_asr.SherpaASR` 是否可导入
+   - 检查 `asr_model_path` / `asr_tokens_path` 路径
+   - 若缺依赖：`pip install sherpa-onnx`
+
+3. HTTP ASR 返回空文本
    - 检查 `asr_response_text_key`
    - 检查服务端返回 JSON 结构
 
-3. HTTP TTS 没有音频
+4. HTTP TTS 没有音频
    - 检查 `tts_response_mode` 是否匹配服务端
    - `audio_stream`/`json_url`/`json_file`/`json_base64`
 
-4. 语音失败影响文本
+5. SoVITS runtime 失败
+   - 检查 `tts_runtime_script` 路径
+   - 手动执行脚本确认参数 `--text --output` 可用
+
+6. 语音失败影响文本
    - 正常不应发生；provider 会回退 noop，不影响文本主链路
+
+7. 配置写了 runtime 但仍走 http
+   - 检查 `asr_provider_type` / `tts_provider_type` 是否为 `runtime`
+   - 观察启动日志中的 `asr_cls/tts_cls`
 
 ---
 

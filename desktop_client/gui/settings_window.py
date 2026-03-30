@@ -615,6 +615,7 @@ class SettingsWindow(QWidget):
             ("toggle_ball", "显示/隐藏悬浮球", "Ctrl+Shift+B"),
             ("quick_ask", "快速提问", "Ctrl+Shift+Q"),
             ("cycle_theme", "切换主题", "Ctrl+Shift+T"),
+            ("toggle_asr", "ASR 开始/停止", "Ctrl+Shift+R"),
         ]
 
         for key, label, default in hotkey_items:
@@ -687,6 +688,17 @@ class SettingsWindow(QWidget):
 
         self._enable_tts = QCheckBox("启用本地 TTS 播放（文本仍会正常显示）")
         voice_section.add_widget(self._enable_tts)
+
+        self._enable_asr_hotkey = QCheckBox("启用 ASR 快捷键触发")
+        voice_section.add_widget(self._enable_asr_hotkey)
+
+        self._enable_asr_button = QCheckBox("显示 ASR 按钮（聊天输入区）")
+        voice_section.add_widget(self._enable_asr_button)
+
+        self._asr_runtime_backend = QComboBox()
+        self._asr_runtime_backend.addItem("sherpa_onnx", "sherpa_onnx")
+        self._asr_runtime_backend.addItem("faster_whisper", "faster_whisper")
+        voice_section.add_row("ASR Runtime Backend", self._asr_runtime_backend)
 
         self._auto_play_voice = QCheckBox("收到语音消息时自动播放")
         voice_section.add_widget(self._auto_play_voice)
@@ -2036,6 +2048,17 @@ class SettingsWindow(QWidget):
         # 语音设置
         if hasattr(self.config, "voice"):
             self._enable_tts.setChecked(self.config.voice.enable_tts)
+            self._enable_asr_hotkey.setChecked(
+                getattr(self.config.voice, "enable_asr_hotkey", True)
+            )
+            self._enable_asr_button.setChecked(
+                getattr(self.config.voice, "enable_asr_button", True)
+            )
+            target_backend = getattr(self.config.voice, "asr_runtime_backend", "sherpa_onnx")
+            for i in range(self._asr_runtime_backend.count()):
+                if self._asr_runtime_backend.itemData(i) == target_backend:
+                    self._asr_runtime_backend.setCurrentIndex(i)
+                    break
             self._auto_play_voice.setChecked(self.config.voice.auto_play_voice)
 
         # 免打扰模式
@@ -2423,6 +2446,9 @@ class SettingsWindow(QWidget):
             },
             "voice": {
                 "enable_tts": self._enable_tts.isChecked(),
+                "enable_asr_hotkey": self._enable_asr_hotkey.isChecked(),
+                "enable_asr_button": self._enable_asr_button.isChecked(),
+                "asr_runtime_backend": self._asr_runtime_backend.currentData(),
                 "auto_play_voice": self._auto_play_voice.isChecked(),
             },
             "proactive": {
@@ -2519,6 +2545,9 @@ class SettingsWindow(QWidget):
 
             # 语音
             self.config.voice.enable_tts = settings["voice"]["enable_tts"]
+            self.config.voice.enable_asr_hotkey = settings["voice"]["enable_asr_hotkey"]
+            self.config.voice.enable_asr_button = settings["voice"]["enable_asr_button"]
+            self.config.voice.asr_runtime_backend = settings["voice"]["asr_runtime_backend"]
             self.config.voice.auto_play_voice = settings["voice"]["auto_play_voice"]
 
             # 主动对话

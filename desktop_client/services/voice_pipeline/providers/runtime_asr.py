@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..base import BaseASRProvider
 from ..models import ASRProviderConfig
+from .sherpa_asr import SherpaASRProvider
 
 
 class RuntimeASRProvider(BaseASRProvider):
@@ -15,11 +16,15 @@ class RuntimeASRProvider(BaseASRProvider):
         self._backend = (config.runtime_backend or 'faster_whisper').lower()
         self._model = None
         self._cancelled = False
+        self._sherpa_provider: SherpaASRProvider | None = None
 
     async def warmup(self) -> None:
-        if self._backend == 'faster_whisper':
+        if self._backend in ('sherpa_onnx', 'sherpa_asr'):
+            self._sherpa_provider = SherpaASRProvider(self.config, self.logger)
+            await self._sherpa_provider.warmup()
+        elif self._backend == 'faster_whisper':
             await self._warmup_faster_whisper()
-        elif self._backend in ('sherpa_onnx', 'funasr', 'custom'):
+        elif self._backend in ('funasr', 'custom'):
             self.logger.warning(f"Runtime ASR backend '{self._backend}' 当前为扩展骨架")
         else:
             raise ValueError(f"未知 ASR runtime backend: {self._backend}")
@@ -41,8 +46,17 @@ class RuntimeASRProvider(BaseASRProvider):
 
     async def shutdown(self) -> None:
         self._model = None
+        if self._sherpa_provider is not None:
+            await self._sherpa_provider.shutdown()
+            self._sherpa_provider = None
 
     async def transcribe_file(self, audio_path: str, **kwargs) -> str:
+        if self._backend in ('sherpa_onnx', 'sherpa_asr'):
+            if self._sherpa_provider is None:
+                await self.warmup()
+            if self._sherpa_provider is None:
+                return ''
+            return await self._sherpa_provider.transcribe_file(audio_path, **kwargs)
         if self._backend == 'faster_whisper':
             return await self._transcribe_faster_whisper(audio_path)
         return ''
@@ -79,3 +93,5 @@ class RuntimeASRProvider(BaseASRProvider):
 
     def cancel(self) -> None:
         self._cancelled = True
+        if self._sherpa_provider is not None:
+            self._sherpa_provider.cancel()

@@ -158,6 +158,7 @@ class CompactChatWindow(QWidget):
 
     message_sent = Signal(str)
     image_sent = Signal(str, str)  # path, text
+    asr_toggle_requested = Signal()
     closed = Signal()
     window_moved = Signal(int, int)  # delta_x, delta_y - 窗口移动时发射
     window_resized = Signal()  # 窗口大小改变时发射
@@ -365,6 +366,18 @@ class CompactChatWindow(QWidget):
         self._attach_btn.setToolTip("发送图片/附件")
         self._attach_btn.clicked.connect(self._on_attach_clicked)
         input_layout.addWidget(self._attach_btn)
+
+        self._asr_btn = QPushButton("🎤")
+        self._asr_btn.setObjectName("compactAsrBtn")
+        self._asr_btn.setFixedSize(40, 40)
+        self._asr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._asr_btn.setToolTip("开始/停止 ASR 录音")
+        self._asr_btn.clicked.connect(self.asr_toggle_requested.emit)
+        show_asr_btn = True
+        if self._config and hasattr(self._config, "voice"):
+            show_asr_btn = bool(getattr(self._config.voice, "enable_asr_button", True))
+        self._asr_btn.setVisible(show_asr_btn)
+        input_layout.addWidget(self._asr_btn)
 
         self._input = PasteAwareTextEdit()
         self._input.setPlaceholderText("输入消息...")
@@ -1847,7 +1860,8 @@ class CompactChatWindow(QWidget):
 
     def _on_auto_hide_timeout(self):
         """自动隐藏超时回调"""
-        if self._auto_hide_enabled and not self._is_waiting:
+        is_typing = bool(self._input.toPlainText().strip())
+        if self._auto_hide_enabled and not self._is_waiting and not is_typing and not self._input.hasFocus():
             self.hide()
 
     def enterEvent(self, event):
@@ -1887,6 +1901,7 @@ class FloatingBallWindow(QWidget):
     screenshot_requested = Signal(str)
     message_sent = Signal(str)
     image_sent = Signal(str, str)
+    asr_toggle_requested = Signal()
 
     def __init__(self, config=None, parent=None):
         super().__init__(parent)
@@ -1948,6 +1963,7 @@ class FloatingBallWindow(QWidget):
         self._compact_window = CompactChatWindow(config=self.config)
         self._compact_window.message_sent.connect(self.message_sent)
         self._compact_window.image_sent.connect(self.image_sent)
+        self._compact_window.asr_toggle_requested.connect(self.asr_toggle_requested)
         self._compact_window.window_moved.connect(self._on_compact_window_moved)
         self._compact_window.window_resized.connect(self._on_compact_window_resized)
 

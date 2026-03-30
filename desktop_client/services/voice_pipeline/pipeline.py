@@ -51,7 +51,8 @@ class VoicePipelineRuntime:
         await self.tts_provider.warmup()
         self.logger.info(
             f"VoicePipeline 重载完成: asr={self.runtime_config.asr.provider_type}/{self.runtime_config.asr.runtime_backend}, "
-            f"tts={self.runtime_config.tts.provider_type}/{self.runtime_config.tts.runtime_backend}"
+            f"tts={self.runtime_config.tts.provider_type}/{self.runtime_config.tts.runtime_backend}, "
+            f"asr_cls={self.asr_provider.__class__.__name__}, tts_cls={self.tts_provider.__class__.__name__}"
         )
 
     async def shutdown(self) -> None:

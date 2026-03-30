@@ -19,6 +19,9 @@ class ASRProviderConfig:
     runtime_backend: str = "faster_whisper"  # sherpa_onnx / faster_whisper / funasr / custom
     model_path: str = ""
     tokens_path: str = ""
+    encoder_path: str = ""
+    decoder_path: str = ""
+    joiner_path: str = ""
     device: str = "cpu"
     language: str = "zh"
 
@@ -39,6 +42,11 @@ class TTSProviderConfig:
     model_path: str = ""
     speaker: str = ""
     language: str = "zh"
+    ref_audio_path: str = ""
+    prompt_text: str = ""
+    prompt_lang: str = ""
+    runtime_python: str = "python"
+    runtime_script: str = ""
 
 
 @dataclass
@@ -70,6 +78,16 @@ def _parse_json_map(raw: str) -> Dict[str, Any]:
 
 
 def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
+    raw_backend = str(getattr(voice_cfg, "asr_runtime_backend", "") or "").strip()
+    auto_sherpa = bool(
+        getattr(voice_cfg, "asr_model_path", "")
+        or getattr(voice_cfg, "asr_tokens_path", "")
+        or getattr(voice_cfg, "asr_encoder_path", "")
+        or getattr(voice_cfg, "asr_decoder_path", "")
+        or getattr(voice_cfg, "asr_joiner_path", "")
+    )
+    asr_backend = raw_backend or ("sherpa_onnx" if auto_sherpa else "faster_whisper")
+
     asr = ASRProviderConfig(
         enabled=bool(getattr(voice_cfg, "asr_enabled", False)),
         provider_type=str(getattr(voice_cfg, "asr_provider_type", "none") or "none"),
@@ -79,9 +97,12 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
         response_text_key=str(getattr(voice_cfg, "asr_response_text_key", "text") or "text"),
         headers_json=str(getattr(voice_cfg, "asr_headers_json", "{}") or "{}"),
         extra_params_json=str(getattr(voice_cfg, "asr_extra_params_json", "{}") or "{}"),
-        runtime_backend=str(getattr(voice_cfg, "asr_runtime_backend", "faster_whisper") or "faster_whisper"),
+        runtime_backend=asr_backend,
         model_path=str(getattr(voice_cfg, "asr_model_path", "") or ""),
         tokens_path=str(getattr(voice_cfg, "asr_tokens_path", "") or ""),
+        encoder_path=str(getattr(voice_cfg, "asr_encoder_path", "") or ""),
+        decoder_path=str(getattr(voice_cfg, "asr_decoder_path", "") or ""),
+        joiner_path=str(getattr(voice_cfg, "asr_joiner_path", "") or ""),
         device=str(getattr(voice_cfg, "asr_device", "cpu") or "cpu"),
         language=str(getattr(voice_cfg, "asr_language", "zh") or "zh"),
     )
@@ -101,6 +122,11 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
         model_path=str(getattr(voice_cfg, "tts_model_path", "") or ""),
         speaker=str(getattr(voice_cfg, "tts_speaker", "") or ""),
         language=str(getattr(voice_cfg, "tts_language", "zh") or "zh"),
+        ref_audio_path=str(getattr(voice_cfg, "tts_ref_audio_path", "") or ""),
+        prompt_text=str(getattr(voice_cfg, "tts_prompt_text", "") or ""),
+        prompt_lang=str(getattr(voice_cfg, "tts_prompt_lang", "") or ""),
+        runtime_python=str(getattr(voice_cfg, "tts_runtime_python", "python") or "python"),
+        runtime_script=str(getattr(voice_cfg, "tts_runtime_script", "") or ""),
     )
 
     pipe = PipelineConfig(

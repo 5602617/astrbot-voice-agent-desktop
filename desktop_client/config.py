@@ -159,6 +159,7 @@ class HotkeyConfigData:
     toggle_ball: str = "Ctrl+Shift+B"
     quick_ask: str = "Ctrl+Shift+Q"
     cycle_theme: str = "Ctrl+Shift+T"
+    toggle_asr: str = "Ctrl+Shift+R"
     global_enabled: bool = False
 
 
@@ -188,6 +189,9 @@ class VoiceConfig:
     emit_asr_text_message: bool = False
     save_audio_cache: bool = True
     audio_cache_dir: str = "desktop_client/data/cache/audio"
+    enable_asr_hotkey: bool = True
+    asr_hotkey: str = "Ctrl+Shift+R"
+    enable_asr_button: bool = True
 
     # ==================== ASR 配置 ====================
     asr_enabled: bool = False
@@ -198,9 +202,12 @@ class VoiceConfig:
     asr_response_text_key: str = "text"
     asr_headers_json: str = "{}"
     asr_extra_params_json: str = "{}"
-    asr_runtime_backend: str = "faster_whisper"  # sherpa_onnx / faster_whisper / funasr / custom
+    asr_runtime_backend: str = "sherpa_onnx"  # sherpa_onnx / faster_whisper / funasr / custom
     asr_model_path: str = ""
     asr_tokens_path: str = ""
+    asr_encoder_path: str = ""
+    asr_decoder_path: str = ""
+    asr_joiner_path: str = ""
     asr_device: str = "cpu"
     asr_language: str = "zh"
 
@@ -219,6 +226,11 @@ class VoiceConfig:
     tts_model_path: str = ""
     tts_speaker: str = ""
     tts_language: str = "zh"
+    tts_ref_audio_path: str = ""
+    tts_prompt_text: str = ""
+    tts_prompt_lang: str = ""
+    tts_runtime_python: str = "python"
+    tts_runtime_script: str = ""
 
     # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）
     auto_start_local_asr: bool = False
