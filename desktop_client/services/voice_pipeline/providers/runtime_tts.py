@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import asyncio
+import tempfile
+import time
+import uuid
+from pathlib import Path
+from typing import Optional
+
+from ..base import BaseTTSProvider
+from ..models import TTSProviderConfig
+
+
+class RuntimeTTSProvider(BaseTTSProvider):
+    def __init__(self, config: TTSProviderConfig, logger, cache_dir: str):
+        self.config = config
+        self.logger = logger
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._backend = (config.runtime_backend or 'qt').lower()
+        self._qt_speaker = None
+        self._pyttsx3 = None
+
+    async def warmup(self) -> None:
+        if self._backend == 'qt':
+            try:
+                from PySide6.QtTextToSpeech import QTextToSpeech
+                self._qt_speaker = QTextToSpeech()
+                self.logger.info('Runtime TTS backend=qt 初始化成功')
+            except Exception as exc:
+                raise RuntimeError('Qt TTS 初始化失败') from exc
+        elif self._backend == 'pyttsx3':
+            try:
+                import pyttsx3
+                self._pyttsx3 = pyttsx3.init()
+                self.logger.info('Runtime TTS backend=pyttsx3 初始化成功')
+            except Exception as exc:
+                raise RuntimeError('pyttsx3 初始化失败') from exc
+        elif self._backend == 'edge_tts':
+            self.logger.info('Runtime TTS backend=edge_tts 初始化成功')
+        elif self._backend in ('gpt_sovits', 'custom'):
+            self.logger.warning(f"Runtime TTS backend '{self._backend}' 当前为扩展骨架")
+        else:
+            raise ValueError(f'未知 TTS runtime backend: {self._backend}')
+
+    async def shutdown(self) -> None:
+        self.stop()
+
+    async def synthesize_to_file(
+        self,
+        text: str,
+        output_path: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[str]:
+        if not text.strip():
+            return None
+
+        out = Path(output_path) if output_path else self.cache_dir / f"tts_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.{self.config.audio_format}"
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        if self._backend == 'edge_tts':
+            await self._edge_tts_to_file(text, out)
+            return str(out)
+
+        if self._backend == 'pyttsx3':
+            await self._pyttsx3_to_file(text, out)
+            return str(out)
+
+        if self._backend == 'qt':
+            # Qt TTS 不稳定支持导出文件，这里回退为仅实时说话
+            self._qt_speak(text)
+            return None
+
+        return None
+
+    async def synthesize_bytes(self, text: str, **kwargs) -> bytes | None:
+        if self._backend == 'edge_tts':
+            path = await self.synthesize_to_file(text)
+            if path:
+                return Path(path).read_bytes()
+        return None
+
+    async def _edge_tts_to_file(self, text: str, out: Path) -> None:
+        try:
+            import edge_tts
+        except Exception as exc:
+            raise RuntimeError('缺少 edge-tts 依赖') from exc
+
+        voice = self.config.speaker or 'zh-CN-XiaoxiaoNeural'
+        communicate = edge_tts.Communicate(text=text, voice=voice)
+        await communicate.save(str(out))
+
+    async def _pyttsx3_to_file(self, text: str, out: Path) -> None:
+        if self._pyttsx3 is None:
+            await self.warmup()
+        if self._pyttsx3 is None:
+            return
+
+        def _run():
+            self._pyttsx3.save_to_file(text, str(out))
+            self._pyttsx3.runAndWait()
+
+        await asyncio.to_thread(_run)
+
+    def _qt_speak(self, text: str) -> None:
+        if self._qt_speaker is None:
+            try:
+                from PySide6.QtTextToSpeech import QTextToSpeech
+                self._qt_speaker = QTextToSpeech()
+            except Exception:
+                return
+        self._qt_speaker.say(text)
+
+    def stop(self) -> None:
+        if self._qt_speaker is not None:
+            try:
+                self._qt_speaker.stop()
+            except Exception:
+                pass
+        if self._pyttsx3 is not None:
+            try:
+                self._pyttsx3.stop()
+            except Exception:
+                pass

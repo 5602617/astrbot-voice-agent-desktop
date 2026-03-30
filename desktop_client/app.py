@@ -866,6 +866,25 @@ class DesktopClientApp(QObject):
         await self._on_message_sent(text)
         return True
 
+    async def submit_local_asr_audio_file(self, audio_path: str) -> Optional[str]:
+        """供本地录音模块调用：提交音频文件并触发 ASR->LLM->TTS 流程。"""
+        plugin = self._plugin_manager.get_plugin("local_voice_bridge")
+        if plugin and hasattr(plugin, "submit_asr_audio_file"):
+            return await plugin.submit_asr_audio_file(
+                audio_path, self.config.session_id or ""
+            )
+        return None
+
+    async def submit_local_asr_audio_bytes(
+        self, audio_bytes: bytes, sample_rate: Optional[int] = None
+    ) -> Optional[str]:
+        plugin = self._plugin_manager.get_plugin("local_voice_bridge")
+        if plugin and hasattr(plugin, "submit_asr_audio_bytes"):
+            return await plugin.submit_asr_audio_bytes(
+                audio_bytes, sample_rate, self.config.session_id or ""
+            )
+        return None
+
 
 def main():
     """入口函数"""

@@ -37,6 +37,7 @@ class LocalVoiceBridgePlugin(IPlugin):
 
         self._runtime = LocalVoiceRuntime(bridge=bridge, config=config)
 
+        self.register_hook(HookType.PRE_MESSAGE_SEND, self._on_pre_message_send)
         self.register_hook(HookType.POST_MESSAGE_RECEIVE, self._on_post_message_receive)
         self.load_config()
 
@@ -76,9 +77,33 @@ class LocalVoiceBridgePlugin(IPlugin):
 
         return HookResult.CONTINUE
 
+    async def _on_pre_message_send(self, context: HookContext) -> HookResult:
+        """新输入到来时可中断上一轮语音输出。"""
+        session_id = context.get("session_id", "")
+        self._runtime.interrupt_current_turn(session_id=session_id, reason="new_input")
+        return HookResult.CONTINUE
+
     async def submit_asr_text(self, text: str, session_id: Optional[str] = None) -> bool:
         """供本地 ASR 适配器调用：提交识别文本到云端。"""
         return await self._runtime.submit_asr_text(text=text, session_id=session_id)
+
+    async def submit_asr_audio_file(
+        self, audio_path: str, session_id: Optional[str] = None
+    ) -> Optional[str]:
+        """供外部录音模块调用：提交音频文件给 ASR。"""
+        return await self._runtime.handle_audio_file(audio_path, session_id=session_id)
+
+    async def submit_asr_audio_bytes(
+        self,
+        audio_bytes: bytes,
+        sample_rate: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> Optional[str]:
+        return await self._runtime.handle_audio_bytes(
+            audio_bytes=audio_bytes,
+            sample_rate=sample_rate,
+            session_id=session_id,
+        )
 
     def set_tts_enabled(self, enabled: bool) -> None:
         self._runtime.set_tts_enabled(enabled)

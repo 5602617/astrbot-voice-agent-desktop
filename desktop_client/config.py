@@ -180,6 +180,46 @@ class VoiceConfig:
 
     enable_tts: bool = True
     auto_play_voice: bool = False
+    # ==================== 新语音管线总开关 ====================
+    enable_voice_pipeline: bool = False
+    interrupt_tts_on_new_input: bool = True
+    interrupt_asr_on_new_input: bool = True
+    auto_play_tts: bool = True
+    emit_asr_text_message: bool = False
+    save_audio_cache: bool = True
+    audio_cache_dir: str = "desktop_client/data/cache/audio"
+
+    # ==================== ASR 配置 ====================
+    asr_enabled: bool = False
+    asr_provider_type: str = "none"  # none / http / runtime
+    asr_api_url: str = ""
+    asr_timeout: int = 30
+    asr_upload_field: str = "file"
+    asr_response_text_key: str = "text"
+    asr_headers_json: str = "{}"
+    asr_extra_params_json: str = "{}"
+    asr_runtime_backend: str = "faster_whisper"  # sherpa_onnx / faster_whisper / funasr / custom
+    asr_model_path: str = ""
+    asr_tokens_path: str = ""
+    asr_device: str = "cpu"
+    asr_language: str = "zh"
+
+    # ==================== TTS 配置 ====================
+    tts_enabled: bool = True
+    tts_provider_type: str = "none"  # none / http / runtime
+    tts_api_url: str = ""
+    tts_method: str = "POST"  # GET / POST
+    tts_text_field: str = "text"
+    tts_response_mode: str = "audio_stream"  # audio_stream / json_url / json_file / json_base64
+    tts_response_key: str = "audio_url"
+    tts_headers_json: str = "{}"
+    tts_extra_params_json: str = "{}"
+    tts_audio_format: str = "wav"
+    tts_runtime_backend: str = "qt"  # qt / pyttsx3 / edge_tts / gpt_sovits / custom
+    tts_model_path: str = ""
+    tts_speaker: str = ""
+    tts_language: str = "zh"
+
     # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）
     auto_start_local_asr: bool = False
     # 本地 ASR 适配器，格式: module.path:ClassName
