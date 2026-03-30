@@ -185,6 +185,9 @@ class VoicePipelineRuntime:
             return None
 
         if msg_type == 'end':
+            if key not in self._last_reply_started:
+                self.logger.info(f"忽略重复/无效 end 事件: key={key}")
+                return None
             self._last_reply_started.discard(key)
             return await self.on_llm_reply_end(session_ctx=session_id)
         return None

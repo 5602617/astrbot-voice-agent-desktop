@@ -93,6 +93,8 @@ class DesktopClientApp(QObject):
         self._audio_recorder = AudioRecorderService()
         self._asr_recording = False
         self._space_recording_active = False
+        self._chat_history_manager = None
+        self._pending_asr_message_id: Optional[str] = None
 
         # 重连计时器
         self._reconnect_timer: Optional[QTimer] = None
@@ -526,6 +528,7 @@ class DesktopClientApp(QObject):
         # 初始化聊天记录管理器
         chat_history_path = self.config.storage.chat_history_path
         chat_history_manager = get_chat_history_manager(chat_history_path)
+        self._chat_history_manager = chat_history_manager
         self._message_handler.set_chat_history_manager(chat_history_manager)
         self._media_handler.set_chat_history_manager(chat_history_manager)
         self._settings_controller.set_chat_history_manager(chat_history_manager)
@@ -677,6 +680,7 @@ class DesktopClientApp(QObject):
             self._audio_recorder.start()
             self._asr_recording = True
             self._floating_ball.show_system_message("🎙️ 开始录音")
+            logger.info("ASR录音开始")
         except AudioRecorderError as e:
             self._floating_ball.show_system_message(f"录音不可用: {e}")
         except Exception as e:
@@ -687,10 +691,46 @@ class DesktopClientApp(QObject):
             audio_path = self._audio_recorder.stop()
             self._asr_recording = False
             self._floating_ball.show_system_message("🧠 正在识别语音...")
+            self._pending_asr_message_id = self._create_asr_placeholder_message()
+            logger.info("ASR占位消息已创建: %s", self._pending_asr_message_id)
             asyncio.ensure_future(self._submit_local_asr_audio_file_with_retry(audio_path))
         except Exception as e:
             self._asr_recording = False
             self._floating_ball.show_system_message(f"录音停止失败: {e}")
+            self._finalize_asr_placeholder_failed(f"语音识别失败：{e}")
+
+    def _create_asr_placeholder_message(self) -> Optional[str]:
+        if not self._chat_history_manager:
+            return None
+        msg = self._chat_history_manager.add_message(
+            role="user",
+            content="🧠 正在识别语音…",
+            msg_type="text",
+            metadata={"source": "local_asr", "placeholder": True},
+        )
+        return msg.id
+
+    def _finalize_asr_placeholder_success(self, text: str) -> None:
+        if not self._chat_history_manager:
+            return
+        if self._pending_asr_message_id:
+            ok = self._chat_history_manager.update_message(self._pending_asr_message_id, text)
+            logger.info("ASR占位消息更新为最终文本: id=%s, ok=%s", self._pending_asr_message_id, ok)
+        else:
+            self._chat_history_manager.add_message(
+                role="user",
+                content=text,
+                msg_type="text",
+                metadata={"source": "local_asr"},
+            )
+            logger.info("ASR无占位消息，已直接添加用户消息")
+        self._pending_asr_message_id = None
+
+    def _finalize_asr_placeholder_failed(self, error_text: str) -> None:
+        if self._chat_history_manager and self._pending_asr_message_id:
+            ok = self._chat_history_manager.update_message(self._pending_asr_message_id, error_text)
+            logger.info("ASR占位消息更新失败状态: id=%s, ok=%s", self._pending_asr_message_id, ok)
+        self._pending_asr_message_id = None
 
     def eventFilter(self, watched, event):
         """固定行为：非文本输入焦点时，长按空格录音，松开提交。"""
@@ -728,7 +768,13 @@ class DesktopClientApp(QObject):
                 with open(audio_path, "rb") as f:
                     f.read(1)
                 logger.info("ASR实际提交文件路径: %s (attempt=%s)", audio_path, i)
-                await self.submit_local_asr_audio_file(audio_path)
+                text = await self.submit_local_asr_audio_file(audio_path)
+                if text and text.strip():
+                    self._finalize_asr_placeholder_success(text.strip())
+                    if self._floating_ball:
+                        self._floating_ball.start_waiting_response()
+                else:
+                    self._finalize_asr_placeholder_failed("语音识别失败：未识别到有效文本")
                 return
             except OSError as e:
                 is_sharing_violation = (
@@ -746,11 +792,13 @@ class DesktopClientApp(QObject):
                     self._floating_ball.show_system_message(
                         f"语音识别失败：录音文件仍被占用（{e}）"
                     )
+                self._finalize_asr_placeholder_failed(f"语音识别失败：录音文件仍被占用（{e}）")
                 return
             except Exception as e:
                 logger.exception("ASR提交失败: %s", e)
                 if self._floating_ball:
                     self._floating_ball.show_system_message(f"语音识别失败: {e}")
+                self._finalize_asr_placeholder_failed(f"语音识别失败：{e}")
                 return
 
     @asyncSlot(str)

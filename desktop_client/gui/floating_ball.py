@@ -15,6 +15,7 @@ from typing import Optional, Set
 import os
 import sys
 import math
+import logging
 from enum import Enum
 
 from PySide6.QtCore import (
@@ -65,6 +66,8 @@ from .chat_widgets import (
 )
 from .markdown_utils import MarkdownLabel
 from ..services import get_chat_history_manager, ChatMessage
+
+logger = logging.getLogger(__name__)
 
 
 # macOS 窗口置顶支持
@@ -845,7 +848,9 @@ class CompactChatWindow(QWidget):
             if msg.msg_type == "image" and msg.file_path:
                 self._display_user_image(msg.file_path)
             else:
-                self._display_user_text(msg.content)
+                label = self._display_user_text(msg.content)
+                if label:
+                    self._message_labels[msg.id] = label
         else:
             # AI消息
             if msg.msg_type == "voice":
@@ -922,6 +927,7 @@ class CompactChatWindow(QWidget):
 
         container.adjustSize()
         self._add_to_history(container, is_image=False)
+        return lbl
 
     def _display_user_image(self, image_path: str):
         """显示用户图片消息（仅UI，不添加到历史）"""
@@ -1234,6 +1240,7 @@ class CompactChatWindow(QWidget):
             return
 
         self._display_message_from_history(msg)
+        logger.info("聊天消息追加渲染: id=%s role=%s type=%s", msg.id, msg.role, msg.msg_type)
         self._scroll_to_bottom()
 
         # 自动播放语音逻辑
@@ -1273,6 +1280,11 @@ class CompactChatWindow(QWidget):
             if label and isinstance(label, MarkdownLabel):
                 label.set_markdown(new_content)
                 self._scroll_to_bottom()
+                logger.info("聊天消息更新渲染(Markdown): id=%s", message_id)
+            elif label and isinstance(label, QLabel):
+                label.setText(new_content)
+                self._scroll_to_bottom()
+                logger.info("聊天消息更新渲染(QLabel): id=%s", message_id)
 
     def _on_history_cleared(self):
         """处理历史记录清除信号"""
@@ -1376,7 +1388,8 @@ class CompactChatWindow(QWidget):
             self.message_sent.emit(text)
 
         self._input.clear()
-        # 不再调用 _start_waiting()，允许连续发送消息
+        # 重置本轮 AI 响应上下文，避免新回复覆盖旧消息
+        self._start_waiting()
 
     def _start_waiting(self):
         """开始等待响应状态
@@ -1692,6 +1705,7 @@ class CompactChatWindow(QWidget):
     def _scroll_to_bottom(self):
         scrollbar = self._scroll_area.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+        logger.debug("聊天窗口滚动到底部: max=%s", scrollbar.maximum())
 
     def update_streaming_response(self, content: str):
         """更新流式响应"""
@@ -2118,6 +2132,10 @@ class FloatingBallWindow(QWidget):
     def add_user_message(self, text: str, image_path: Optional[str] = None):
         """添加用户消息（传递给精简窗口）"""
         self._compact_window.add_user_message(text, image_path)
+
+    def start_waiting_response(self):
+        """开始等待 AI 回复（用于 ASR 提交等外部入口）。"""
+        self._compact_window._start_waiting()
 
     def _update_breathing(self):
         """更新呼吸灯效果"""
