@@ -683,74 +683,32 @@ class SettingsWindow(QWidget):
 
         layout.addWidget(bubble_section)
 
+        asr_mode_section = SettingsSection("ASR 快捷键行为")
+        self._asr_hold_to_talk = QCheckBox("按住说话（松开结束）")
+        self._asr_hold_to_talk.setToolTip("关闭后改为：按一次开始录音，再按一次结束录音")
+        asr_mode_section.add_widget(self._asr_hold_to_talk)
+        layout.addWidget(asr_mode_section)
+
         # 语音设置
         voice_section = SettingsSection("语音设置")
 
-        self._enable_voice_pipeline = QCheckBox("启用语音流水线")
-        voice_section.add_widget(self._enable_voice_pipeline)
-
         self._asr_enabled = QCheckBox("启用 ASR")
         voice_section.add_widget(self._asr_enabled)
-
-        self._asr_provider_type = QComboBox()
-        self._asr_provider_type.addItem("runtime", "runtime")
-        self._asr_provider_type.addItem("http", "http")
-        self._asr_provider_type.addItem("none", "none")
-        voice_section.add_row("ASR Provider", self._asr_provider_type)
 
         self._asr_hotkey = QLineEdit()
         self._asr_hotkey.setPlaceholderText("Ctrl+Shift+R")
         voice_section.add_row("ASR 快捷键", self._asr_hotkey)
 
-        self._asr_runtime_backend = QComboBox()
-        self._asr_runtime_backend.addItem("sherpa_onnx", "sherpa_onnx")
-        self._asr_runtime_backend.addItem("faster_whisper", "faster_whisper")
-        voice_section.add_row("ASR Runtime Backend", self._asr_runtime_backend)
-
         self._asr_model_path = QLineEdit()
-        voice_section.add_row("ASR 模型路径", self._asr_model_path)
-
-        self._tts_provider_type = QComboBox()
-        self._tts_provider_type.addItem("runtime", "runtime")
-        self._tts_provider_type.addItem("http", "http")
-        self._tts_provider_type.addItem("none", "none")
-        voice_section.add_row("TTS Provider", self._tts_provider_type)
+        voice_section.add_row("ASR 模型路径（Sherpa）", self._asr_model_path)
 
         self._tts_enabled = QCheckBox("启用 TTS")
         voice_section.add_widget(self._tts_enabled)
 
-        self._tts_runtime_backend = QComboBox()
-        self._tts_runtime_backend.addItem("qt", "qt")
-        self._tts_runtime_backend.addItem("pyttsx3", "pyttsx3")
-        self._tts_runtime_backend.addItem("edge_tts", "edge_tts")
-        self._tts_runtime_backend.addItem("sovits", "sovits")
-        self._tts_runtime_backend.addItem("gpt_sovits", "gpt_sovits")
-        voice_section.add_row("TTS Runtime Backend", self._tts_runtime_backend)
-
         self._tts_model_path = QLineEdit()
-        voice_section.add_row("SoVITS 模型目录", self._tts_model_path)
-
-        self._sovits_auto_start = QCheckBox("启动客户端时自动启动 SoVITS API")
-        voice_section.add_widget(self._sovits_auto_start)
-        self._sovits_project_dir = QLineEdit()
-        self._sovits_project_dir.setPlaceholderText("D:/GPT-SoVITS")
-        voice_section.add_row("SoVITS 项目目录", self._sovits_project_dir)
-        self._sovits_api_script = QLineEdit()
-        self._sovits_api_script.setPlaceholderText("api_v2.py")
-        voice_section.add_row("SoVITS API 脚本", self._sovits_api_script)
-        self._sovits_tts_config = QLineEdit()
-        self._sovits_tts_config.setPlaceholderText("GPT_SoVITS/configs/tts_infer.yaml")
-        voice_section.add_row("SoVITS TTS 配置", self._sovits_tts_config)
-        self._sovits_python = QLineEdit()
-        self._sovits_python.setPlaceholderText("留空则使用当前 Python")
-        voice_section.add_row("SoVITS Python", self._sovits_python)
-        self._sovits_bind_host = QLineEdit()
-        self._sovits_bind_host.setPlaceholderText("127.0.0.1")
-        voice_section.add_row("SoVITS Host", self._sovits_bind_host)
-        self._sovits_bind_port = QSpinBox()
-        self._sovits_bind_port.setRange(1, 65535)
-        self._sovits_bind_port.setValue(9880)
-        voice_section.add_row("SoVITS Port", self._sovits_bind_port)
+        voice_section.add_row("TTS 模型路径", self._tts_model_path)
+        self._emit_asr_text_message = QCheckBox("ASR 文本显示到对话框")
+        voice_section.add_widget(self._emit_asr_text_message)
 
         layout.addWidget(voice_section)
 
@@ -2093,66 +2051,25 @@ class SettingsWindow(QWidget):
             # 气泡设置
             self._bubble_duration.setValue(self.config.interaction.bubble_duration)
             self._bubble_auto_hide.setChecked(self.config.interaction.bubble_auto_hide)
+            self._asr_hold_to_talk.setChecked(
+                getattr(self.config.interaction, "asr_hold_to_talk", False)
+            )
 
         # 语音设置
         if hasattr(self.config, "voice"):
-            self._enable_voice_pipeline.setChecked(
-                getattr(self.config.voice, "enable_voice_pipeline", False)
-            )
             self._asr_enabled.setChecked(getattr(self.config.voice, "asr_enabled", False))
-            for i in range(self._asr_provider_type.count()):
-                if self._asr_provider_type.itemData(i) == getattr(
-                    self.config.voice, "asr_provider_type", "none"
-                ):
-                    self._asr_provider_type.setCurrentIndex(i)
-                    break
             self._asr_hotkey.setText(
                 getattr(self.config.voice, "asr_hotkey", "") or getattr(self.config.hotkeys, "toggle_asr", "Ctrl+Shift+R")
             )
-            target_backend = getattr(self.config.voice, "asr_runtime_backend", "sherpa_onnx")
-            for i in range(self._asr_runtime_backend.count()):
-                if self._asr_runtime_backend.itemData(i) == target_backend:
-                    self._asr_runtime_backend.setCurrentIndex(i)
-                    break
             self._asr_model_path.setText(
                 getattr(self.config.voice, "asr_model_path", "")
             )
-            for i in range(self._tts_provider_type.count()):
-                if self._tts_provider_type.itemData(i) == getattr(
-                    self.config.voice, "tts_provider_type", "none"
-                ):
-                    self._tts_provider_type.setCurrentIndex(i)
-                    break
-            for i in range(self._tts_runtime_backend.count()):
-                if self._tts_runtime_backend.itemData(i) == getattr(
-                    self.config.voice, "tts_runtime_backend", "qt"
-                ):
-                    self._tts_runtime_backend.setCurrentIndex(i)
-                    break
             self._tts_enabled.setChecked(
                 getattr(self.config.voice, "tts_enabled", getattr(self.config.voice, "enable_tts", True))
             )
             self._tts_model_path.setText(getattr(self.config.voice, "tts_model_path", ""))
-            self._sovits_auto_start.setChecked(
-                getattr(self.config.voice, "sovits_auto_start", False)
-            )
-            self._sovits_project_dir.setText(
-                getattr(self.config.voice, "sovits_project_dir", "")
-            )
-            self._sovits_api_script.setText(
-                getattr(self.config.voice, "sovits_api_script", "api_v2.py")
-            )
-            self._sovits_tts_config.setText(
-                getattr(self.config.voice, "sovits_tts_config", "GPT_SoVITS/configs/tts_infer.yaml")
-            )
-            self._sovits_python.setText(
-                getattr(self.config.voice, "sovits_python", "")
-            )
-            self._sovits_bind_host.setText(
-                getattr(self.config.voice, "sovits_bind_host", "127.0.0.1")
-            )
-            self._sovits_bind_port.setValue(
-                int(getattr(self.config.voice, "sovits_bind_port", 9880) or 9880)
+            self._emit_asr_text_message.setChecked(
+                getattr(self.config.voice, "emit_asr_text_message", False)
             )
 
         # 免打扰模式
@@ -2537,25 +2454,15 @@ class SettingsWindow(QWidget):
                 "bubble_duration": self._bubble_duration.value(),
                 "bubble_auto_hide": self._bubble_auto_hide.isChecked(),
                 "do_not_disturb": self._do_not_disturb.isChecked(),
+                "asr_hold_to_talk": self._asr_hold_to_talk.isChecked(),
             },
             "voice": {
-                "enable_voice_pipeline": self._enable_voice_pipeline.isChecked(),
                 "asr_enabled": self._asr_enabled.isChecked(),
-                "asr_provider_type": self._asr_provider_type.currentData(),
                 "asr_hotkey": self._asr_hotkey.text().strip() or "Ctrl+Shift+R",
-                "asr_runtime_backend": self._asr_runtime_backend.currentData(),
                 "asr_model_path": self._asr_model_path.text().strip(),
                 "tts_enabled": self._tts_enabled.isChecked(),
-                "tts_provider_type": self._tts_provider_type.currentData(),
-                "tts_runtime_backend": self._tts_runtime_backend.currentData(),
                 "tts_model_path": self._tts_model_path.text().strip(),
-                "sovits_auto_start": self._sovits_auto_start.isChecked(),
-                "sovits_project_dir": self._sovits_project_dir.text().strip(),
-                "sovits_api_script": self._sovits_api_script.text().strip() or "api_v2.py",
-                "sovits_tts_config": self._sovits_tts_config.text().strip() or "GPT_SoVITS/configs/tts_infer.yaml",
-                "sovits_python": self._sovits_python.text().strip(),
-                "sovits_bind_host": self._sovits_bind_host.text().strip() or "127.0.0.1",
-                "sovits_bind_port": self._sovits_bind_port.value(),
+                "emit_asr_text_message": self._emit_asr_text_message.isChecked(),
             },
             "proactive": {
                 "enabled": self._proactive_enabled.isChecked(),
@@ -2648,31 +2555,25 @@ class SettingsWindow(QWidget):
             self.config.interaction.do_not_disturb = settings["interaction"][
                 "do_not_disturb"
             ]
+            self.config.interaction.asr_hold_to_talk = settings["interaction"][
+                "asr_hold_to_talk"
+            ]
 
             # 语音
-            self.config.voice.enable_voice_pipeline = settings["voice"]["enable_voice_pipeline"]
+            self.config.voice.enable_voice_pipeline = True
             self.config.voice.asr_enabled = settings["voice"]["asr_enabled"]
-            self.config.voice.asr_provider_type = settings["voice"]["asr_provider_type"]
+            self.config.voice.asr_provider_type = "runtime"
             self.config.voice.enable_asr_hotkey = True
             self.config.voice.asr_hotkey = settings["voice"]["asr_hotkey"]
             self.config.hotkeys.toggle_asr = settings["voice"]["asr_hotkey"]
-            self.config.voice.asr_runtime_backend = settings["voice"]["asr_runtime_backend"]
+            self.config.voice.asr_runtime_backend = "sherpa_onnx"
             self.config.voice.asr_model_path = settings["voice"]["asr_model_path"]
             self.config.voice.tts_enabled = settings["voice"]["tts_enabled"]
             self.config.voice.enable_tts = settings["voice"]["tts_enabled"]
-            self.config.voice.tts_provider_type = settings["voice"]["tts_provider_type"]
-            self.config.voice.tts_runtime_backend = settings["voice"]["tts_runtime_backend"]
+            self.config.voice.tts_provider_type = "http"
+            self.config.voice.tts_runtime_backend = "qt"
             self.config.voice.tts_model_path = settings["voice"]["tts_model_path"]
-            self.config.voice.sovits_auto_start = settings["voice"]["sovits_auto_start"]
-            self.config.voice.sovits_project_dir = settings["voice"]["sovits_project_dir"]
-            self.config.voice.sovits_api_script = settings["voice"]["sovits_api_script"]
-            self.config.voice.sovits_tts_config = settings["voice"]["sovits_tts_config"]
-            self.config.voice.sovits_python = settings["voice"]["sovits_python"]
-            self.config.voice.sovits_bind_host = settings["voice"]["sovits_bind_host"]
-            self.config.voice.sovits_bind_port = settings["voice"]["sovits_bind_port"]
-            self.config.voice.tts_api_url = (
-                f"http://{self.config.voice.sovits_bind_host}:{self.config.voice.sovits_bind_port}/tts"
-            )
+            self.config.voice.emit_asr_text_message = settings["voice"]["emit_asr_text_message"]
 
             # 主动对话
             self.config.proactive.enabled = settings["proactive"]["enabled"]

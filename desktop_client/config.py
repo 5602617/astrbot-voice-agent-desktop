@@ -173,6 +173,7 @@ class InteractionConfig:
     bubble_duration: int = 5  # 秒
     bubble_auto_hide: bool = True
     do_not_disturb: bool = False  # 免打扰模式：收到消息不弹窗，只显示动画效果
+    asr_hold_to_talk: bool = False  # 快捷键行为：True=按住说话松开发送，False=按一下开始/结束
 
 
 @dataclass

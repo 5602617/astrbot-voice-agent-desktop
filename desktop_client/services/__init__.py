@@ -7,7 +7,6 @@ from .proactive_dialog import ProactiveDialogService
 from .chat_history import ChatHistoryManager, ChatMessage, get_chat_history_manager
 from .desktop_monitor import DesktopMonitorService, DesktopState
 from .update_service import UpdateService
-from .sovits_api_manager import SovitsApiManager
 
 __all__ = [
     "ScreenCaptureService",
@@ -18,5 +17,4 @@ __all__ = [
     "DesktopMonitorService",
     "DesktopState",
     "UpdateService",
-    "SovitsApiManager",
 ]

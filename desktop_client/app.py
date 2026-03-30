@@ -30,7 +30,6 @@ from .bridge import MessageBridge, InputMessage
 from .services.proactive_dialog import ProactiveDialogService
 from .services import get_chat_history_manager, UpdateService
 from .services.audio_recorder import AudioRecorderService, AudioRecorderError
-from .services.sovits_api_manager import SovitsApiManager
 from .handlers import (
     MessageHandler,
     ScreenshotHandler,
@@ -93,7 +92,6 @@ class DesktopClientApp(QObject):
         self._update_service = None
         self._audio_recorder = AudioRecorderService()
         self._asr_recording = False
-        self._sovits_api_manager = SovitsApiManager(self.config, logger)
 
         # 重连计时器
         self._reconnect_timer: Optional[QTimer] = None
@@ -241,9 +239,6 @@ class DesktopClientApp(QObject):
 
     async def _startup(self):
         """启动时异步任务"""
-        if self._sovits_api_manager.is_enabled():
-            asyncio.ensure_future(self._start_sovits_api_background())
-
         await self._plugin_manager.start()
         if self._plugin_manager.get_plugin("local_voice_bridge"):
             await self._plugin_manager.enable_plugin("local_voice_bridge")
@@ -271,15 +266,6 @@ class DesktopClientApp(QObject):
                     logger.info("主动对话服务已启动")
         else:
             logger.warning("自动连接已禁用")
-
-    async def _start_sovits_api_background(self) -> None:
-        """后台启动 SoVITS API，避免阻塞客户端主启动流程。"""
-        try:
-            await self._sovits_api_manager.ensure_started()
-        except Exception as e:
-            logger.error(f"SoVITS API 自动启动失败: {e}")
-            if self._floating_ball:
-                self._floating_ball.show_system_message(f"SoVITS 启动失败: {e}")
 
     async def _reconnect_server(self):
         """重新连接服务器"""
@@ -616,6 +602,8 @@ class DesktopClientApp(QObject):
         self._hotkey_manager.quick_ask_triggered.connect(self._show_quick_ask)
         self._hotkey_manager.cycle_theme_triggered.connect(self._cycle_theme)
         self._hotkey_manager.toggle_asr_triggered.connect(self._toggle_asr_recording)
+        self._hotkey_manager.asr_hold_start_triggered.connect(self._on_asr_hold_start)
+        self._hotkey_manager.asr_hold_end_triggered.connect(self._on_asr_hold_end)
 
     # ==================== 事件处理 ====================
 
@@ -639,10 +627,6 @@ class DesktopClientApp(QObject):
         """配置保存后热重载语音流水线配置。"""
         if not success:
             return
-        if self._sovits_api_manager.is_enabled():
-            asyncio.ensure_future(self._sovits_api_manager.restart_if_needed())
-        else:
-            asyncio.ensure_future(self._sovits_api_manager.stop())
         plugin = self._plugin_manager.get_plugin("local_voice_bridge")
         if plugin and hasattr(plugin, "reload_from_config"):
             asyncio.ensure_future(plugin.reload_from_config())
@@ -680,20 +664,36 @@ class DesktopClientApp(QObject):
 
     def _toggle_asr_recording(self):
         """开始/停止本地 ASR 录音并提交到语音流水线。"""
+        if getattr(self.config.interaction, "asr_hold_to_talk", False):
+            # 长按模式由按下/松开信号控制，这里忽略 toggle 触发
+            return
+        if self._asr_recording:
+            self._stop_asr_recording()
+        else:
+            self._start_asr_recording()
+
+    def _on_asr_hold_start(self):
+        if getattr(self.config.interaction, "asr_hold_to_talk", False) and not self._asr_recording:
+            self._start_asr_recording()
+
+    def _on_asr_hold_end(self):
+        if getattr(self.config.interaction, "asr_hold_to_talk", False) and self._asr_recording:
+            self._stop_asr_recording()
+
+    def _start_asr_recording(self):
         if not self._floating_ball:
             return
 
-        if not self._asr_recording:
-            try:
-                self._audio_recorder.start()
-                self._asr_recording = True
-                self._floating_ball.show_system_message("🎙️ 开始录音，再次触发结束")
-            except AudioRecorderError as e:
-                self._floating_ball.show_system_message(f"录音不可用: {e}")
-            except Exception as e:
-                self._floating_ball.show_system_message(f"录音启动失败: {e}")
-            return
+        try:
+            self._audio_recorder.start()
+            self._asr_recording = True
+            self._floating_ball.show_system_message("🎙️ 开始录音")
+        except AudioRecorderError as e:
+            self._floating_ball.show_system_message(f"录音不可用: {e}")
+        except Exception as e:
+            self._floating_ball.show_system_message(f"录音启动失败: {e}")
 
+    def _stop_asr_recording(self):
         try:
             audio_path = self._audio_recorder.stop()
             self._asr_recording = False
@@ -882,7 +882,6 @@ class DesktopClientApp(QObject):
 
         if self._proactive_service:
             self._proactive_service.stop()
-        asyncio.ensure_future(self._sovits_api_manager.stop())
 
         python = sys.executable
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -917,7 +916,6 @@ class DesktopClientApp(QObject):
 
         asyncio.ensure_future(self._plugin_manager.stop())
         asyncio.ensure_future(self._bridge.disconnect_server())
-        asyncio.ensure_future(self._sovits_api_manager.stop())
 
         if self._app:
             self._app.quit()
