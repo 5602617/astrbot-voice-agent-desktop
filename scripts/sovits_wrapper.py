@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SoVITS runtime wrapper.
+"""SoVITS runtime wrapper (legacy compatibility path).
 
 最小参数协议：
 --text --output --model-dir --ref-audio --prompt-text --prompt-lang --text-lang [--speaker]
@@ -7,6 +7,7 @@
 说明：
 - 若本地存在可用 GPT-SoVITS Python API，可在 `_try_gpt_sovits` 中扩展接入。
 - 默认 fallback 到 pyttsx3 生成 wav，确保链路可跑。
+- 注意：当前主链路已迁移到内部 runtime provider，请仅在 legacy mode 下使用本脚本。
 """
 
 from __future__ import annotations

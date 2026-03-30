@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -10,6 +9,7 @@ import subprocess
 
 from ..base import BaseTTSProvider
 from ..models import TTSProviderConfig
+from .sovits_tts import SovitsTTSProvider
 
 
 class RuntimeTTSProvider(BaseTTSProvider):
@@ -21,7 +21,7 @@ class RuntimeTTSProvider(BaseTTSProvider):
         self._backend = (config.runtime_backend or 'qt').lower()
         self._qt_speaker = None
         self._pyttsx3 = None
-        self._sovits_provider: SoVITSTTSProvider | None = None
+        self._sovits_provider: BaseTTSProvider | None = None
 
     async def warmup(self) -> None:
         if self._backend == 'qt':
@@ -41,9 +41,13 @@ class RuntimeTTSProvider(BaseTTSProvider):
         elif self._backend == 'edge_tts':
             self.logger.info('Runtime TTS backend=edge_tts 初始化成功')
         elif self._backend in ('sovits', 'gpt_sovits'):
-            self._sovits_provider = SoVITSTTSProvider(self.config, self.logger, self.cache_dir)
+            if self.config.legacy_wrapper_enabled:
+                self.logger.warning("SoVITS legacy wrapper 模式已启用（deprecated 主链路）")
+                self._sovits_provider = LegacySoVITSWrapperProvider(self.config, self.logger, self.cache_dir)
+            else:
+                self._sovits_provider = SovitsTTSProvider(self.config, self.logger, self.cache_dir)
             await self._sovits_provider.warmup()
-        elif self._backend in ('gpt_sovits', 'custom'):
+        elif self._backend in ('custom',):
             self.logger.warning(f"Runtime TTS backend '{self._backend}' 当前为扩展骨架")
         else:
             raise ValueError(f'未知 TTS runtime backend: {self._backend}')
@@ -145,8 +149,8 @@ class RuntimeTTSProvider(BaseTTSProvider):
             self._sovits_provider.stop()
 
 
-class SoVITSTTSProvider(BaseTTSProvider):
-    """SoVITS 本地 runtime 封装（subprocess wrapper 方案）。"""
+class LegacySoVITSWrapperProvider(BaseTTSProvider):
+    """SoVITS 旧 wrapper 兼容路径（subprocess 模式，默认禁用）。"""
 
     def __init__(self, config: TTSProviderConfig, logger, cache_dir: Path):
         self.config = config
@@ -190,13 +194,13 @@ class SoVITSTTSProvider(BaseTTSProvider):
             str(out),
         ]
         if self.config.model_path:
-            cmd += ["--model-path", self.config.model_path]
+            cmd += ["--model-dir", self.config.model_path]
         if self.config.speaker:
             cmd += ["--speaker", self.config.speaker]
         if self.config.language:
-            cmd += ["--language", self.config.language]
+            cmd += ["--text-lang", self.config.language]
         if ref_audio:
-            cmd += ["--ref-audio-path", ref_audio]
+            cmd += ["--ref-audio", ref_audio]
         if prompt_text:
             cmd += ["--prompt-text", prompt_text]
         if prompt_lang:

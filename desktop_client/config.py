@@ -231,6 +231,9 @@ class VoiceConfig:
     tts_prompt_lang: str = ""
     tts_runtime_python: str = "python"
     tts_runtime_script: str = ""
+    tts_timeout: int = 60
+    tts_fallback_to_pyttsx3: bool = False
+    tts_legacy_wrapper_enabled: bool = False
 
     # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）
     auto_start_local_asr: bool = False

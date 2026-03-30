@@ -33,7 +33,7 @@ class TTSProviderConfig:
     api_url: str = ""
     method: str = "POST"  # GET / POST
     text_field: str = "text"
-    response_mode: str = "audio_stream"  # audio_stream / json_url / json_file / json_base64
+    response_mode: str = "audio_stream"  # audio_stream / json_url / json_file(json_path) / json_base64
     response_key: str = "audio_url"
     headers_json: str = "{}"
     extra_params_json: str = "{}"
@@ -47,6 +47,9 @@ class TTSProviderConfig:
     prompt_lang: str = ""
     runtime_python: str = "python"
     runtime_script: str = ""
+    timeout: int = 60
+    fallback_to_pyttsx3: bool = False
+    legacy_wrapper_enabled: bool = False
 
 
 @dataclass
@@ -127,6 +130,9 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
         prompt_lang=str(getattr(voice_cfg, "tts_prompt_lang", "") or ""),
         runtime_python=str(getattr(voice_cfg, "tts_runtime_python", "python") or "python"),
         runtime_script=str(getattr(voice_cfg, "tts_runtime_script", "") or ""),
+        timeout=int(getattr(voice_cfg, "tts_timeout", 60) or 60),
+        fallback_to_pyttsx3=bool(getattr(voice_cfg, "tts_fallback_to_pyttsx3", False)),
+        legacy_wrapper_enabled=bool(getattr(voice_cfg, "tts_legacy_wrapper_enabled", False)),
     )
 
     pipe = PipelineConfig(
