@@ -241,12 +241,8 @@ class DesktopClientApp(QObject):
 
     async def _startup(self):
         """启动时异步任务"""
-        try:
-            await self._sovits_api_manager.ensure_started()
-        except Exception as e:
-            logger.error(f"SoVITS API 自动启动失败: {e}")
-            if self._floating_ball:
-                self._floating_ball.show_system_message(f"SoVITS 启动失败: {e}")
+        if self._sovits_api_manager.is_enabled():
+            asyncio.ensure_future(self._start_sovits_api_background())
 
         await self._plugin_manager.start()
         if self._plugin_manager.get_plugin("local_voice_bridge"):
@@ -275,6 +271,15 @@ class DesktopClientApp(QObject):
                     logger.info("主动对话服务已启动")
         else:
             logger.warning("自动连接已禁用")
+
+    async def _start_sovits_api_background(self) -> None:
+        """后台启动 SoVITS API，避免阻塞客户端主启动流程。"""
+        try:
+            await self._sovits_api_manager.ensure_started()
+        except Exception as e:
+            logger.error(f"SoVITS API 自动启动失败: {e}")
+            if self._floating_ball:
+                self._floating_ball.show_system_message(f"SoVITS 启动失败: {e}")
 
     async def _reconnect_server(self):
         """重新连接服务器"""
