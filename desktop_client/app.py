@@ -41,6 +41,7 @@ from .controllers import SettingsController
 from .logger import get_logger
 from .plugins.manager import get_plugin_manager
 from .plugins.hooks import HookType, HookContext
+from .gui.floating_ball import FloatingBallState
 
 
 # 获取日志器
@@ -607,6 +608,13 @@ class DesktopClientApp(QObject):
         self._hotkey_manager.toggle_ball_triggered.connect(self._toggle_floating_ball)
         self._hotkey_manager.quick_ask_triggered.connect(self._show_quick_ask)
         self._hotkey_manager.cycle_theme_triggered.connect(self._cycle_theme)
+        self._hotkey_manager.asr_hotkey_pressed.connect(self._on_global_asr_hotkey_pressed)
+        self._hotkey_manager.asr_hotkey_released.connect(self._on_global_asr_hotkey_released)
+
+        asr_hotkey = (getattr(self.config.voice, "asr_hotkey", "Space") or "Space").strip()
+        asr_enabled = bool(getattr(self.config.voice, "enable_asr_hotkey", True))
+        self._hotkey_manager.set_asr_hotkey(asr_hotkey, enabled=asr_enabled)
+        logger.info("ASR 热键已初始化: key=%s enabled=%s", asr_hotkey, asr_enabled)
 
     # ==================== 事件处理 ====================
 
@@ -679,7 +687,7 @@ class DesktopClientApp(QObject):
         try:
             self._audio_recorder.start()
             self._asr_recording = True
-            self._floating_ball.show_system_message("🎙️ 开始录音")
+            self._floating_ball.set_state(FloatingBallState.PROCESSING)
             logger.info("ASR录音开始")
         except AudioRecorderError as e:
             self._floating_ball.show_system_message(f"录音不可用: {e}")
@@ -690,12 +698,14 @@ class DesktopClientApp(QObject):
         try:
             audio_path = self._audio_recorder.stop()
             self._asr_recording = False
-            self._floating_ball.show_system_message("🧠 正在识别语音...")
+            self._floating_ball.set_state(FloatingBallState.NORMAL)
             self._pending_asr_message_id = self._create_asr_placeholder_message()
             logger.info("ASR占位消息已创建: %s", self._pending_asr_message_id)
             asyncio.ensure_future(self._submit_local_asr_audio_file_with_retry(audio_path))
         except Exception as e:
             self._asr_recording = False
+            if self._floating_ball:
+                self._floating_ball.set_state(FloatingBallState.NORMAL)
             self._floating_ball.show_system_message(f"录音停止失败: {e}")
             self._finalize_asr_placeholder_failed(f"语音识别失败：{e}")
 
@@ -704,7 +714,7 @@ class DesktopClientApp(QObject):
             return None
         msg = self._chat_history_manager.add_message(
             role="user",
-            content="🧠 正在识别语音…",
+            content="...",
             msg_type="text",
             metadata={"source": "local_asr", "placeholder": True},
         )
@@ -735,6 +745,8 @@ class DesktopClientApp(QObject):
     def eventFilter(self, watched, event):
         """固定行为：非文本输入焦点时，长按空格录音，松开提交。"""
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Space:
+            if self._hotkey_manager and getattr(self._hotkey_manager, "is_asr_hotkey_global_active", False):
+                return False
             if event.isAutoRepeat():
                 return False
             focused = QApplication.focusWidget()
@@ -745,6 +757,8 @@ class DesktopClientApp(QObject):
                 self._start_asr_recording()
                 return True
         elif event.type() == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Space:
+            if self._hotkey_manager and getattr(self._hotkey_manager, "is_asr_hotkey_global_active", False):
+                return False
             if event.isAutoRepeat():
                 return False
             if self._space_recording_active:
@@ -753,6 +767,20 @@ class DesktopClientApp(QObject):
                     self._stop_asr_recording()
                 return True
         return super().eventFilter(watched, event)
+
+    def _on_global_asr_hotkey_pressed(self):
+        focused = QApplication.focusWidget()
+        if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            logger.debug("忽略全局 ASR 按下：当前焦点在文本输入控件")
+            return
+        if not self._asr_recording:
+            logger.info("全局 ASR 快捷键按下")
+            self._start_asr_recording()
+
+    def _on_global_asr_hotkey_released(self):
+        if self._asr_recording:
+            logger.info("全局 ASR 快捷键松开")
+            self._stop_asr_recording()
 
     async def _submit_local_asr_audio_file_with_retry(self, audio_path: str) -> None:
         """在文件句柄完全释放后再提交 ASR，规避 Windows 文件占用错误。"""

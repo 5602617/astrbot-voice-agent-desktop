@@ -10,6 +10,9 @@ from PySide6.QtWidgets import QTextBrowser
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtCore import QUrl, Qt, QTimer
 from .themes import theme_manager, ThemeType
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MarkdownLabel(QTextBrowser):
@@ -86,8 +89,18 @@ class MarkdownLabel(QTextBrowser):
             doc.adjustSize()
             content_height = int(doc.size().height()) + 2
             
-            # 设置控件的固定尺寸
-            self.setFixedSize(content_width, content_height)
+            # 仅固定高度，宽度保持可伸缩，避免外层布局裁切半截气泡
+            self.setMinimumWidth(min(content_width, max_width))
+            self.setMaximumWidth(max_width)
+            self.setMinimumHeight(content_height)
+            self.setMaximumHeight(content_height)
+            logger.debug(
+                "MarkdownLabel 调整尺寸: text_len=%s width=%s/%s height=%s",
+                len(self._original_text or ""),
+                content_width,
+                max_width,
+                content_height,
+            )
         finally:
             self._adjusting_height = False
 

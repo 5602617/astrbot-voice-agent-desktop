@@ -190,7 +190,7 @@ class VoiceConfig:
     save_audio_cache: bool = True
     audio_cache_dir: str = "desktop_client/data/cache/audio"
     enable_asr_hotkey: bool = True
-    asr_hotkey: str = "Ctrl+Shift+R"
+    asr_hotkey: str = "Space"
     enable_asr_button: bool = True
 
     # ==================== ASR 配置 ====================

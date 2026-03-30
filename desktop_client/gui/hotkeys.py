@@ -11,6 +11,7 @@
 
 from typing import Dict, Optional
 from dataclasses import dataclass
+import logging
 
 from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -73,6 +74,8 @@ class HotkeyManager(QObject):
     toggle_ball_triggered = Signal()
     quick_ask_triggered = Signal()
     cycle_theme_triggered = Signal()
+    asr_hotkey_pressed = Signal()
+    asr_hotkey_released = Signal()
 
     _instance: Optional["HotkeyManager"] = None
     _initialized: bool = False
@@ -98,6 +101,10 @@ class HotkeyManager(QObject):
         # 尝试导入全局快捷键库
         self._global_hotkey_available = False
         self._keyboard_listener = None
+        self._global_key_listener = None
+        self._asr_hotkey: str = "Space"
+        self._asr_hotkey_enabled: bool = True
+        self._asr_hotkey_vk = None
 
         try:
             from pynput import keyboard
@@ -105,7 +112,7 @@ class HotkeyManager(QObject):
             self._global_hotkey_available = True
             self._keyboard = keyboard
         except ImportError:
-            print("[HotkeyManager] pynput not available, using Qt shortcuts only")
+            logger.warning("[HotkeyManager] pynput not available, using Qt shortcuts only")
 
     def set_parent_widget(self, widget: QWidget):
         """设置父窗口（用于 Qt 快捷键）"""
@@ -118,6 +125,18 @@ class HotkeyManager(QObject):
         self._setup_qt_shortcuts()
         if self._global_enabled:
             self._setup_global_hotkeys()
+        self._setup_global_asr_hotkey()
+
+    def set_asr_hotkey(self, key: str, enabled: bool = True):
+        """设置语音录音快捷键（全局按下/松开监听）。"""
+        self._asr_hotkey = (key or "Space").strip() or "Space"
+        self._asr_hotkey_enabled = bool(enabled)
+        logger.info("[HotkeyManager] 配置录音快捷键: key=%s enabled=%s", self._asr_hotkey, self._asr_hotkey_enabled)
+        self._setup_global_asr_hotkey()
+
+    @property
+    def is_asr_hotkey_global_active(self) -> bool:
+        return bool(self._global_key_listener is not None)
 
     def get_config(self) -> HotkeyConfig:
         """获取快捷键配置"""
@@ -164,6 +183,8 @@ class HotkeyManager(QObject):
             self._setup_global_hotkeys()
         else:
             self._stop_global_hotkeys()
+        # ASR 全局按键监听与普通热键独立，确保后台可录音
+        self._setup_global_asr_hotkey()
 
     def _setup_global_hotkeys(self):
         """设置全局快捷键（使用 pynput）"""
@@ -203,10 +224,10 @@ class HotkeyManager(QObject):
             if hotkeys:
                 self._keyboard_listener = keyboard.GlobalHotKeys(hotkeys)
                 self._keyboard_listener.start()
-                print(f"[HotkeyManager] Global hotkeys enabled: {list(hotkeys.keys())}")
+                logger.info("[HotkeyManager] Global hotkeys enabled: %s", list(hotkeys.keys()))
 
         except Exception as e:
-            print(f"[HotkeyManager] Failed to setup global hotkeys: {e}")
+            logger.warning("[HotkeyManager] Failed to setup global hotkeys: %s", e)
 
     def _stop_global_hotkeys(self):
         """停止全局快捷键监听"""
@@ -216,6 +237,66 @@ class HotkeyManager(QObject):
             except Exception:
                 pass
             self._keyboard_listener = None
+
+    def _setup_global_asr_hotkey(self):
+        """设置 ASR 全局按下/松开监听（支持后台）。"""
+        self._stop_global_asr_hotkey()
+        if not self._asr_hotkey_enabled:
+            logger.info("[HotkeyManager] ASR 全局快捷键已禁用")
+            return
+        if not self._global_hotkey_available:
+            logger.warning("[HotkeyManager] 无法启用 ASR 全局快捷键：pynput 不可用")
+            return
+
+        key_name = self._normalize_single_key(self._asr_hotkey)
+        vk = self._resolve_vk(key_name)
+        if vk is None:
+            logger.warning("[HotkeyManager] 不支持的 ASR 快捷键: %s（仅支持单键）", self._asr_hotkey)
+            return
+        self._asr_hotkey_vk = vk
+
+        def on_press(key):
+            if self._match_vk(key, self._asr_hotkey_vk):
+                self.asr_hotkey_pressed.emit()
+
+        def on_release(key):
+            if self._match_vk(key, self._asr_hotkey_vk):
+                self.asr_hotkey_released.emit()
+
+        try:
+            self._global_key_listener = self._keyboard.Listener(on_press=on_press, on_release=on_release)
+            self._global_key_listener.daemon = True
+            self._global_key_listener.start()
+            logger.info("[HotkeyManager] ASR 全局快捷键监听已启动: key=%s vk=%s", key_name, vk)
+        except Exception as e:
+            logger.warning("[HotkeyManager] 启动 ASR 全局快捷键失败: %s", e)
+            self._global_key_listener = None
+
+    def _stop_global_asr_hotkey(self):
+        if self._global_key_listener:
+            try:
+                self._global_key_listener.stop()
+            except Exception:
+                pass
+            self._global_key_listener = None
+
+    def _normalize_single_key(self, key: str) -> str:
+        return (key or "Space").strip().lower().replace(" ", "")
+
+    def _resolve_vk(self, key_name: str):
+        if key_name in ("space",):
+            return 32
+        if len(key_name) == 1 and key_name.isalpha():
+            return ord(key_name.upper())
+        if len(key_name) == 1 and key_name.isdigit():
+            return ord(key_name)
+        return None
+
+    def _match_vk(self, key, target_vk: int) -> bool:
+        try:
+            return getattr(key, "vk", None) == target_vk
+        except Exception:
+            return False
 
 
     def _convert_to_pynput_format(self, qt_key: str) -> Optional[str]:
@@ -273,6 +354,7 @@ class HotkeyManager(QObject):
     def cleanup(self):
         """清理资源"""
         self._stop_global_hotkeys()
+        self._stop_global_asr_hotkey()
         for shortcut in self._shortcuts.values():
             shortcut.deleteLater()
         self._shortcuts.clear()
@@ -299,3 +381,4 @@ class _HotkeyManagerProxy:
 
 
 hotkey_manager = _HotkeyManagerProxy()  # type: ignore
+logger = logging.getLogger(__name__)

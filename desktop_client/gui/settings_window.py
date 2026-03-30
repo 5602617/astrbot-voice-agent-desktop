@@ -690,6 +690,10 @@ class SettingsWindow(QWidget):
 
         self._asr_model_path = QLineEdit()
         voice_section.add_row("ASR 模型路径（Sherpa）", self._asr_model_path)
+        self._asr_hotkey = QLineEdit()
+        self._asr_hotkey.setPlaceholderText("Space")
+        self._asr_hotkey.setToolTip("录音快捷键（单键），默认 Space。后台全局监听按下开始，松开结束。")
+        voice_section.add_row("录音快捷键", self._asr_hotkey)
 
         self._tts_enabled = QCheckBox("启用本地 TTS")
         voice_section.add_widget(self._tts_enabled)
@@ -716,6 +720,17 @@ class SettingsWindow(QWidget):
         voice_section.add_row("GENIE_DATA_DIR(可选)", self._genie_data_dir)
         self._emit_asr_text_message = QCheckBox("ASR 文本显示到对话框")
         voice_section.add_widget(self._emit_asr_text_message)
+
+        self._onnx_help_label = QLabel(
+            "ONNX 配置说明（简版）：\n"
+            "1) GENIE_DATA_DIR 填 GenieData 公共资源目录，不是角色模型目录。\n"
+            "2) 预置角色模式（如 feibi）通常无需填写 ONNX 模型目录。\n"
+            "3) 自定义角色模式才需要填写 ONNX 模型目录（角色导出的 onnx_out）。\n"
+            "详细说明见 desktop_client/README_voice_onnx.md"
+        )
+        self._onnx_help_label.setWordWrap(True)
+        self._onnx_help_label.setObjectName("infoLabel")
+        voice_section.add_widget(self._onnx_help_label)
         self._tts_mode.currentIndexChanged.connect(self._update_genie_mode_visibility)
         self._update_genie_mode_visibility()
 
@@ -2076,6 +2091,7 @@ class SettingsWindow(QWidget):
             self._asr_model_path.setText(
                 getattr(self.config.voice, "asr_model_path", "")
             )
+            self._asr_hotkey.setText(getattr(self.config.voice, "asr_hotkey", "Space") or "Space")
             self._tts_enabled.setChecked(
                 getattr(self.config.voice, "enable_local_tts", getattr(self.config.voice, "tts_enabled", True))
             )
@@ -2483,6 +2499,7 @@ class SettingsWindow(QWidget):
             "voice": {
                 "asr_enabled": self._asr_enabled.isChecked(),
                 "asr_model_path": self._asr_model_path.text().strip(),
+                "asr_hotkey": self._asr_hotkey.text().strip() or "Space",
                 "enable_local_tts": self._tts_enabled.isChecked(),
                 "tts_backend": "genie_tts",
                 "genie_enabled": self._tts_enabled.isChecked(),
@@ -2595,8 +2612,8 @@ class SettingsWindow(QWidget):
             self.config.voice.enable_voice_pipeline = True
             self.config.voice.asr_enabled = settings["voice"]["asr_enabled"]
             self.config.voice.asr_provider_type = "runtime"
-            self.config.voice.enable_asr_hotkey = False
-            self.config.voice.asr_hotkey = "Space(hold)"
+            self.config.voice.enable_asr_hotkey = True
+            self.config.voice.asr_hotkey = settings["voice"]["asr_hotkey"]
             self.config.voice.asr_runtime_backend = "sherpa_onnx"
             asr_model_input = settings["voice"]["asr_model_path"]
             asr_path = Path(asr_model_input).expanduser() if asr_model_input else None
@@ -2721,6 +2738,10 @@ class SettingsWindow(QWidget):
         # 应用快捷键配置
         hotkey_config = HotkeyConfig.from_dict(settings["hotkeys"])
         hotkey_manager.set_config(hotkey_config)
+        hotkey_manager.set_asr_hotkey(
+            settings["voice"]["asr_hotkey"],
+            enabled=True,
+        )
 
         if settings["hotkeys"]["global_enabled"]:
             hotkey_manager.enable_global_hotkeys(True)
