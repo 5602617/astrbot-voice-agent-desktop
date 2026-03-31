@@ -18,6 +18,8 @@ class GPTSoVITSRuntimeManager:
         self.config = config
         self.logger = logger
         self._proc: Optional[subprocess.Popen] = None
+        self._detected_health_path: Optional[str] = None
+        self._weights_synced = False
 
     @property
     def base_url(self) -> str:
@@ -47,12 +49,12 @@ class GPTSoVITSRuntimeManager:
         workdir = (self.config.gpt_sovits_working_dir or str(Path(script).parent)).strip()
         if not Path(workdir).exists():
             raise RuntimeError(f"GPT-SoVITS 工作目录不存在: {workdir}")
-        cmd = [python_path, script, "--host", "127.0.0.1", "--port", str(self.config.gpt_sovits_port)]
+        cmd = [python_path, script, "-a", "127.0.0.1", "-p", str(self.config.gpt_sovits_port)]
         cfg = (self.config.gpt_sovits_tts_config_path or "").strip()
         if cfg:
             if not Path(cfg).exists():
                 raise RuntimeError(f"GPT-SoVITS tts_infer.yaml 不存在: {cfg}")
-            cmd += ["--config", cfg]
+            cmd += ["-c", cfg]
         self.logger.info("启动 GPT-SoVITS 本地推理子进程: %s", " ".join(cmd))
         self._proc = subprocess.Popen(
             cmd,
@@ -62,13 +64,53 @@ class GPTSoVITSRuntimeManager:
         )
 
     async def is_healthy(self) -> bool:
-        url = f"{self.base_url}{self.config.gpt_sovits_health_endpoint or '/health'}"
-        try:
-            async with httpx.AsyncClient(timeout=max(1, int(self.config.gpt_sovits_health_timeout or 2))) as client:
-                r = await client.get(url)
-                return r.status_code < 500
-        except Exception:
-            return False
+        timeout = max(1, int(self.config.gpt_sovits_health_timeout or 2))
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if self._detected_health_path:
+                try:
+                    r = await client.get(f"{self.base_url}{self._detected_health_path}")
+                    return r.status_code < 500
+                except Exception:
+                    pass
+
+            for path in [self.config.gpt_sovits_health_endpoint, "/health", "/docs", "/openapi.json"]:
+                if not path:
+                    continue
+                try:
+                    r = await client.get(f"{self.base_url}{path}")
+                    if r.status_code < 500:
+                        self._detected_health_path = path
+                        self.logger.info("GPT-SoVITS 健康检查端点自动探测为: %s", path)
+                        return True
+                except Exception:
+                    continue
+
+            # api_v2.py 默认一定有 /control；用于兜底探测（不执行命令）
+            try:
+                r = await client.get(f"{self.base_url}/control")
+                if r.status_code < 500:
+                    self._detected_health_path = "/control"
+                    return True
+            except Exception:
+                return False
+        return False
+
+    async def sync_weights(self) -> None:
+        if self._weights_synced:
+            return
+        timeout = max(2, int(self.config.gpt_sovits_request_timeout or 90))
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            gpt_w = (getattr(self.config, "gpt_sovits_selected_gpt_weights", "") or "").strip()
+            sovits_w = (getattr(self.config, "gpt_sovits_selected_sovits_weights", "") or "").strip()
+            if gpt_w:
+                r = await client.get(f"{self.base_url}/set_gpt_weights", params={"weights_path": gpt_w})
+                if r.status_code >= 400:
+                    raise RuntimeError(f"设置 GPT 权重失败: HTTP {r.status_code}")
+            if sovits_w:
+                r = await client.get(f"{self.base_url}/set_sovits_weights", params={"weights_path": sovits_w})
+                if r.status_code >= 400:
+                    raise RuntimeError(f"设置 SoVITS 权重失败: HTTP {r.status_code}")
+        self._weights_synced = True
 
     async def shutdown(self) -> None:
         if not bool(getattr(self.config, "gpt_sovits_auto_shutdown_on_exit", True)):
@@ -94,6 +136,7 @@ class GPTSoVITSRuntimeProvider(BaseTTSProvider):
 
     async def warmup(self) -> None:
         await self._manager.ensure_started()
+        await self._manager.sync_weights()
 
     async def synthesize_to_file(self, text: str, output_path: str | None = None, **kwargs) -> str | None:
         if not text.strip():
@@ -103,14 +146,17 @@ class GPTSoVITSRuntimeProvider(BaseTTSProvider):
         out = Path(output_path) if output_path else self.cache_dir / f"gpt_sovits_{self._seq:04d}.wav"
         payload = {
             "text": text,
-            "character": self.config.gpt_sovits_default_character,
-            "language": self.config.gpt_sovits_default_language,
-            "reference_audio_path": self.config.gpt_sovits_reference_audio_path,
-            "reference_text": self.config.gpt_sovits_reference_text,
-            "segmentation_mode": self.config.gpt_sovits_segmentation_mode,
-            "segmentation_params": json.loads(self.config.gpt_sovits_segmentation_params_json or "{}"),
-            "output_path": str(out),
+            "text_lang": self.config.gpt_sovits_default_language,
+            "ref_audio_path": self.config.gpt_sovits_reference_audio_path,
+            "prompt_lang": self.config.gpt_sovits_default_language,
+            "prompt_text": self.config.gpt_sovits_reference_text,
+            "text_split_method": self.config.gpt_sovits_segmentation_mode or "cut5",
+            "media_type": "wav",
+            "streaming_mode": False,
         }
+        extra = json.loads(self.config.gpt_sovits_segmentation_params_json or "{}")
+        if isinstance(extra, dict):
+            payload.update(extra)
         url = f"{self._manager.base_url}{self.config.gpt_sovits_tts_endpoint or '/tts'}"
         async with httpx.AsyncClient(timeout=max(10, int(self.config.gpt_sovits_request_timeout or 90))) as client:
             r = await client.post(url, json=payload)

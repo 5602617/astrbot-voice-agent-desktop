@@ -70,6 +70,10 @@ class TTSProviderConfig:
     gpt_sovits_reference_text: str = ""
     gpt_sovits_segmentation_mode: str = "auto"
     gpt_sovits_segmentation_params_json: str = "{}"
+    gpt_sovits_gpt_weights_dir: str = ""
+    gpt_sovits_sovits_weights_dir: str = ""
+    gpt_sovits_selected_gpt_weights: str = ""
+    gpt_sovits_selected_sovits_weights: str = ""
     gpt_sovits_auto_shutdown_on_exit: bool = True
 
 
@@ -185,6 +189,10 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
         gpt_sovits_reference_text=str(getattr(voice_cfg, "gpt_sovits_reference_text", "") or ""),
         gpt_sovits_segmentation_mode=str(getattr(voice_cfg, "gpt_sovits_segmentation_mode", "auto") or "auto"),
         gpt_sovits_segmentation_params_json=str(getattr(voice_cfg, "gpt_sovits_segmentation_params_json", "{}") or "{}"),
+        gpt_sovits_gpt_weights_dir=str(getattr(voice_cfg, "gpt_sovits_gpt_weights_dir", "") or ""),
+        gpt_sovits_sovits_weights_dir=str(getattr(voice_cfg, "gpt_sovits_sovits_weights_dir", "") or ""),
+        gpt_sovits_selected_gpt_weights=str(getattr(voice_cfg, "gpt_sovits_selected_gpt_weights", "") or ""),
+        gpt_sovits_selected_sovits_weights=str(getattr(voice_cfg, "gpt_sovits_selected_sovits_weights", "") or ""),
         gpt_sovits_auto_shutdown_on_exit=bool(getattr(voice_cfg, "gpt_sovits_auto_shutdown_on_exit", True)),
     )
 

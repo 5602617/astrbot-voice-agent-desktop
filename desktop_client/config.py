@@ -248,6 +248,10 @@ class VoiceConfig:
     gpt_sovits_reference_text: str = ""
     gpt_sovits_segmentation_mode: str = "auto"
     gpt_sovits_segmentation_params_json: str = "{}"
+    gpt_sovits_gpt_weights_dir: str = ""
+    gpt_sovits_sovits_weights_dir: str = ""
+    gpt_sovits_selected_gpt_weights: str = ""
+    gpt_sovits_selected_sovits_weights: str = ""
     gpt_sovits_auto_shutdown_on_exit: bool = True
 
     # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）

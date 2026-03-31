@@ -55,7 +55,7 @@ if not errorlevel 1 (
 )
 
 cd /d "%WORK_DIR%"
-set "CMD=%PYTHON_EXE% %API_SCRIPT% --host %HOST% --port %PORT% --config %TTS_YAML%"
+set "CMD=%PYTHON_EXE% %API_SCRIPT% -a %HOST% -p %PORT% -c %TTS_YAML%"
 echo [INFO] 启动命令: !CMD!
 
 call !CMD!

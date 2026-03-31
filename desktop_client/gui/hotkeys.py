@@ -261,13 +261,17 @@ class HotkeyManager(QObject):
         need_ctrl, need_shift, need_alt, main_vk = combo
         self._asr_hotkey_vk = main_vk
         pressed = {"recording_triggered": False}
+        pressed_keys: set[int] = set()
 
         def on_press(key):
             vk = getattr(key, "vk", None)
             if vk is None:
                 return
-            self._pressed_keys.add(vk)
-            if vk == main_vk and self._mods_match(need_ctrl, need_shift, need_alt):
+            pressed_keys.add(vk)
+            has_ctrl = (162 in pressed_keys) or (163 in pressed_keys)
+            has_shift = (160 in pressed_keys) or (161 in pressed_keys)
+            has_alt = (164 in pressed_keys) or (165 in pressed_keys)
+            if vk == main_vk and (has_ctrl if need_ctrl else True) and (has_shift if need_shift else True) and (has_alt if need_alt else True):
                 if not pressed["recording_triggered"]:
                     pressed["recording_triggered"] = True
                     logger.debug("[HotkeyManager] 收到 ASR 按下事件")
@@ -276,7 +280,7 @@ class HotkeyManager(QObject):
         def on_release(key):
             vk = getattr(key, "vk", None)
             if vk is not None:
-                self._pressed_keys.discard(vk)
+                pressed_keys.discard(vk)
             if vk == main_vk and pressed["recording_triggered"]:
                 pressed["recording_triggered"] = False
                 logger.debug("[HotkeyManager] 收到 ASR 松开事件")
@@ -339,7 +343,7 @@ class HotkeyManager(QObject):
         has_ctrl = (162 in self._pressed_keys) or (163 in self._pressed_keys)
         has_shift = (160 in self._pressed_keys) or (161 in self._pressed_keys)
         has_alt = (164 in self._pressed_keys) or (165 in self._pressed_keys)
-        return has_ctrl == need_ctrl and has_shift == need_shift and has_alt == need_alt
+        return (has_ctrl if need_ctrl else True) and (has_shift if need_shift else True) and (has_alt if need_alt else True)
 
     def cleanup(self):
         logger.info("[HotkeyManager] 清理热键资源")
