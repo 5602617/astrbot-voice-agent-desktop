@@ -597,6 +597,10 @@ class DesktopClientApp(QObject):
 
         if self._floating_ball:
             self._hotkey_manager.set_parent_widget(self._floating_ball)
+        from .gui.hotkeys import HotkeyConfig
+        self._hotkey_manager.set_config(HotkeyConfig.from_dict(vars(self.config.hotkeys)))
+        if getattr(self.config.hotkeys, "global_enabled", False):
+            self._hotkey_manager.enable_global_hotkeys(True)
 
         self._hotkey_manager.toggle_chat_triggered.connect(self._toggle_chat_window)
         self._hotkey_manager.region_screenshot_triggered.connect(

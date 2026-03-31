@@ -54,11 +54,15 @@ class LocalVoiceBridgePlugin(IPlugin):
 
     def on_enable(self) -> bool:
         import asyncio
-
-        asyncio.create_task(self._runtime.start())
+        if getattr(self, "_start_task", None) and not self._start_task.done():
+            logger.info("LocalVoiceBridge 启动任务已存在，跳过重复创建")
+            return True
+        self._start_task = asyncio.create_task(self._runtime.start())
         return True
 
     def on_disable(self) -> None:
+        if getattr(self, "_start_task", None) and not self._start_task.done():
+            self._start_task.cancel()
         self._runtime.shutdown()
 
     async def _on_post_message_receive(self, context: HookContext) -> HookResult:
