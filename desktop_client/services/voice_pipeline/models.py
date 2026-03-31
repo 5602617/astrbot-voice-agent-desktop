@@ -52,6 +52,25 @@ class TTSProviderConfig:
     temp_audio_dir: str = "desktop_client/data/cache/audio"
     use_genie_data_dir: bool = False
     genie_data_dir: str = ""
+    gpt_sovits_enabled: bool = False
+    gpt_sovits_python_path: str = "python"
+    gpt_sovits_api_script_path: str = ""
+    gpt_sovits_working_dir: str = ""
+    gpt_sovits_host: str = "127.0.0.1"
+    gpt_sovits_port: int = 9880
+    gpt_sovits_startup_timeout: int = 40
+    gpt_sovits_health_timeout: int = 2
+    gpt_sovits_request_timeout: int = 90
+    gpt_sovits_health_endpoint: str = "/health"
+    gpt_sovits_tts_endpoint: str = "/tts"
+    gpt_sovits_tts_config_path: str = ""
+    gpt_sovits_default_character: str = ""
+    gpt_sovits_default_language: str = "zh"
+    gpt_sovits_reference_audio_path: str = ""
+    gpt_sovits_reference_text: str = ""
+    gpt_sovits_segmentation_mode: str = "auto"
+    gpt_sovits_segmentation_params_json: str = "{}"
+    gpt_sovits_auto_shutdown_on_exit: bool = True
 
 
 @dataclass
@@ -148,6 +167,25 @@ def build_runtime_config(voice_cfg: Any) -> VoiceRuntimeConfig:
         temp_audio_dir=str(getattr(voice_cfg, "genie_temp_audio_dir", getattr(voice_cfg, "audio_cache_dir", "desktop_client/data/cache/audio")) or "desktop_client/data/cache/audio"),
         use_genie_data_dir=bool(getattr(voice_cfg, "genie_use_data_dir", False)),
         genie_data_dir=str(getattr(voice_cfg, "genie_data_dir", "") or ""),
+        gpt_sovits_enabled=bool(getattr(voice_cfg, "gpt_sovits_enabled", False)),
+        gpt_sovits_python_path=str(getattr(voice_cfg, "gpt_sovits_python_path", "python") or "python"),
+        gpt_sovits_api_script_path=str(getattr(voice_cfg, "gpt_sovits_api_script_path", "") or ""),
+        gpt_sovits_working_dir=str(getattr(voice_cfg, "gpt_sovits_working_dir", "") or ""),
+        gpt_sovits_host=str(getattr(voice_cfg, "gpt_sovits_host", "127.0.0.1") or "127.0.0.1"),
+        gpt_sovits_port=int(getattr(voice_cfg, "gpt_sovits_port", 9880) or 9880),
+        gpt_sovits_startup_timeout=int(getattr(voice_cfg, "gpt_sovits_startup_timeout", 40) or 40),
+        gpt_sovits_health_timeout=int(getattr(voice_cfg, "gpt_sovits_health_timeout", 2) or 2),
+        gpt_sovits_request_timeout=int(getattr(voice_cfg, "gpt_sovits_request_timeout", 90) or 90),
+        gpt_sovits_health_endpoint=str(getattr(voice_cfg, "gpt_sovits_health_endpoint", "/health") or "/health"),
+        gpt_sovits_tts_endpoint=str(getattr(voice_cfg, "gpt_sovits_tts_endpoint", "/tts") or "/tts"),
+        gpt_sovits_tts_config_path=str(getattr(voice_cfg, "gpt_sovits_tts_config_path", "") or ""),
+        gpt_sovits_default_character=str(getattr(voice_cfg, "gpt_sovits_default_character", "") or ""),
+        gpt_sovits_default_language=str(getattr(voice_cfg, "gpt_sovits_default_language", "zh") or "zh"),
+        gpt_sovits_reference_audio_path=str(getattr(voice_cfg, "gpt_sovits_reference_audio_path", "") or ""),
+        gpt_sovits_reference_text=str(getattr(voice_cfg, "gpt_sovits_reference_text", "") or ""),
+        gpt_sovits_segmentation_mode=str(getattr(voice_cfg, "gpt_sovits_segmentation_mode", "auto") or "auto"),
+        gpt_sovits_segmentation_params_json=str(getattr(voice_cfg, "gpt_sovits_segmentation_params_json", "{}") or "{}"),
+        gpt_sovits_auto_shutdown_on_exit=bool(getattr(voice_cfg, "gpt_sovits_auto_shutdown_on_exit", True)),
     )
 
     pipe = PipelineConfig(

@@ -35,7 +35,6 @@ class VoicePipelineRuntime:
         self._playing_audio_path: Optional[str] = None
         self._last_reply_started: set[str] = set()
         self._audio_generated_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
-        self._tts_chain_lock = asyncio.Lock()
 
     def set_audio_generated_callback(self, callback: Callable[[str, str], Awaitable[None]]) -> None:
         self._audio_generated_callback = callback
@@ -148,47 +147,12 @@ class VoicePipelineRuntime:
             return None
 
         self.turns.set_state(session_id, VoiceTurnState.SYNTHESIZING)
-        out_path = None
-        chunks = self._split_tts_text(merged, max_len=15)
-        async with self._tts_chain_lock:
-            for idx, chunk in enumerate(chunks, start=1):
-                self.logger.info("TTS分段合成: session=%s chunk_id=%s/%s text=%s", session_id, idx, len(chunks), chunk)
-                cur_out = await self.tts_provider.synthesize_to_file(chunk)
-                if cur_out:
-                    out_path = cur_out
-                    if self.runtime_config.pipeline.auto_play_tts:
-                        self.turns.set_state(session_id, VoiceTurnState.PLAYING)
-                        await self._notify_audio_generated(session_id, cur_out)
+        out_path = await self.tts_provider.synthesize_to_file(merged)
+        if out_path and self.runtime_config.pipeline.auto_play_tts:
+            self.turns.set_state(session_id, VoiceTurnState.PLAYING)
+            await self._notify_audio_generated(session_id, out_path)
         self.turns.end_turn(session_id)
         return out_path
-
-    def _split_tts_text(self, text: str, max_len: int = 15) -> list[str]:
-        txt = (text or "").strip()
-        if not txt:
-            return []
-        punctuation = set("。！？；!?;，,")
-        chunks: list[str] = []
-        buf = ""
-        for ch in txt:
-            buf += ch
-            if len(buf) >= max_len:
-                last_punc_pos = max((buf.rfind(p) for p in punctuation), default=-1)
-                if 0 <= last_punc_pos < len(buf):
-                    chunks.append(buf[: last_punc_pos + 1].strip())
-                    buf = buf[last_punc_pos + 1 :].strip()
-                else:
-                    chunks.append(buf[:max_len].strip())
-                    buf = buf[max_len:].strip()
-            elif ch in punctuation and len(buf) <= max_len:
-                chunks.append(buf.strip())
-                buf = ""
-        if buf.strip():
-            while len(buf) > max_len:
-                chunks.append(buf[:max_len].strip())
-                buf = buf[max_len:].strip()
-            if buf:
-                chunks.append(buf.strip())
-        return [c for c in chunks if c]
 
     def interrupt_current_turn(self, session_ctx: object | None = None, reason: str = 'manual') -> None:
         session_id = self._resolve_session_id(session_ctx)

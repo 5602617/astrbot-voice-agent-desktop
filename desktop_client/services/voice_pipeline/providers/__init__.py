@@ -5,6 +5,7 @@ from .runtime_asr import RuntimeASRProvider
 from .runtime_tts import RuntimeTTSProvider
 from .sherpa_asr import SherpaASRProvider
 from .genie_tts_runtime import GenieTTSRuntime
+from .gpt_sovits_runtime import GPTSoVITSRuntimeProvider
 
 __all__ = [
     'NoopASRProvider',
@@ -15,4 +16,5 @@ __all__ = [
     'RuntimeTTSProvider',
     'SherpaASRProvider',
     'GenieTTSRuntime',
+    'GPTSoVITSRuntimeProvider',
 ]

@@ -9,6 +9,7 @@ from typing import Optional
 from ..base import BaseTTSProvider
 from ..models import TTSProviderConfig
 from .genie_tts_runtime import GenieTTSRuntime
+from .gpt_sovits_runtime import GPTSoVITSRuntimeProvider
 
 
 class RuntimeTTSProvider(BaseTTSProvider):
@@ -21,6 +22,7 @@ class RuntimeTTSProvider(BaseTTSProvider):
         self._qt_speaker = None
         self._pyttsx3 = None
         self._genie_provider: BaseTTSProvider | None = None
+        self._gpt_sovits_provider: BaseTTSProvider | None = None
 
     async def warmup(self) -> None:
         if self._backend == 'qt':
@@ -42,6 +44,9 @@ class RuntimeTTSProvider(BaseTTSProvider):
         elif self._backend == 'genie_tts':
             self._genie_provider = GenieTTSRuntime(self.config, self.logger, str(self.cache_dir))
             await self._genie_provider.warmup()
+        elif self._backend == 'gpt_sovits':
+            self._gpt_sovits_provider = GPTSoVITSRuntimeProvider(self.config, self.logger, str(self.cache_dir))
+            await self._gpt_sovits_provider.warmup()
         elif self._backend in ('custom',):
             self.logger.warning(f"Runtime TTS backend '{self._backend}' 当前为扩展骨架")
         else:
@@ -52,6 +57,9 @@ class RuntimeTTSProvider(BaseTTSProvider):
         if self._genie_provider is not None:
             await self._genie_provider.shutdown()
             self._genie_provider = None
+        if self._gpt_sovits_provider is not None:
+            await self._gpt_sovits_provider.shutdown()
+            self._gpt_sovits_provider = None
 
     async def synthesize_to_file(
         self,
@@ -88,6 +96,13 @@ class RuntimeTTSProvider(BaseTTSProvider):
                 return None
             return await self._genie_provider.synthesize_to_file(text, str(out))
 
+        if self._backend == 'gpt_sovits':
+            if self._gpt_sovits_provider is None:
+                await self.warmup()
+            if self._gpt_sovits_provider is None:
+                return None
+            return await self._gpt_sovits_provider.synthesize_to_file(text, str(out))
+
         return None
 
     async def synthesize_bytes(self, text: str, **kwargs) -> bytes | None:
@@ -96,6 +111,10 @@ class RuntimeTTSProvider(BaseTTSProvider):
             if path:
                 return Path(path).read_bytes()
         if self._backend == 'genie_tts':
+            path = await self.synthesize_to_file(text)
+            if path:
+                return Path(path).read_bytes()
+        if self._backend == 'gpt_sovits':
             path = await self.synthesize_to_file(text)
             if path:
                 return Path(path).read_bytes()
@@ -145,3 +164,5 @@ class RuntimeTTSProvider(BaseTTSProvider):
                 pass
         if self._genie_provider is not None:
             self._genie_provider.stop()
+        if self._gpt_sovits_provider is not None:
+            self._gpt_sovits_provider.stop()

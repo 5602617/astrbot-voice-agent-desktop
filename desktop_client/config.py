@@ -160,7 +160,7 @@ class HotkeyConfigData:
     quick_ask: str = "Ctrl+Shift+Q"
     cycle_theme: str = "Ctrl+Shift+T"
     toggle_asr: str = "Ctrl+T"
-    global_enabled: bool = False
+    global_enabled: bool = True
 
 
 @dataclass
@@ -228,6 +228,27 @@ class VoiceConfig:
     genie_use_data_dir: bool = False
     genie_data_dir: str = ""
     genie_timeout: int = 60
+
+    # ==================== GPT-SoVITS 本地托管推理 ====================
+    gpt_sovits_enabled: bool = False
+    gpt_sovits_python_path: str = "python"
+    gpt_sovits_api_script_path: str = ""
+    gpt_sovits_working_dir: str = ""
+    gpt_sovits_host: str = "127.0.0.1"
+    gpt_sovits_port: int = 9880
+    gpt_sovits_startup_timeout: int = 40
+    gpt_sovits_health_timeout: int = 2
+    gpt_sovits_request_timeout: int = 90
+    gpt_sovits_health_endpoint: str = "/health"
+    gpt_sovits_tts_endpoint: str = "/tts"
+    gpt_sovits_tts_config_path: str = ""
+    gpt_sovits_default_character: str = ""
+    gpt_sovits_default_language: str = "zh"
+    gpt_sovits_reference_audio_path: str = ""
+    gpt_sovits_reference_text: str = ""
+    gpt_sovits_segmentation_mode: str = "auto"
+    gpt_sovits_segmentation_params_json: str = "{}"
+    gpt_sovits_auto_shutdown_on_exit: bool = True
 
     # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）
     auto_start_local_asr: bool = False

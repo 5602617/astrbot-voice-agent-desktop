@@ -693,6 +693,10 @@ class SettingsWindow(QWidget):
         voice_section.add_row("ASR 模型路径（Sherpa）", self._asr_model_path)
         self._tts_enabled = QCheckBox("启用本地 TTS")
         voice_section.add_widget(self._tts_enabled)
+        self._tts_backend = QComboBox()
+        self._tts_backend.addItem("Genie-TTS", "genie_tts")
+        self._tts_backend.addItem("GPT-SoVITS(本地托管)", "gpt_sovits")
+        voice_section.add_row("TTS Provider", self._tts_backend)
         self._tts_mode = QComboBox()
         self._tts_mode.addItem("预置角色模式", "predefined")
         self._tts_mode.addItem("本地 ONNX 模型模式", "onnx_local")
@@ -714,6 +718,17 @@ class SettingsWindow(QWidget):
         voice_section.add_widget(self._genie_auto_play)
         self._genie_data_dir = QLineEdit()
         voice_section.add_row("GENIE_DATA_DIR(可选)", self._genie_data_dir)
+        self._gpt_sovits_python_path = QLineEdit()
+        self._gpt_sovits_python_path.setPlaceholderText("python")
+        voice_section.add_row("GPT-SoVITS Python", self._gpt_sovits_python_path)
+        self._gpt_sovits_api_script_path = QLineEdit()
+        voice_section.add_row("GPT-SoVITS API脚本", self._gpt_sovits_api_script_path)
+        self._gpt_sovits_working_dir = QLineEdit()
+        voice_section.add_row("GPT-SoVITS 工作目录", self._gpt_sovits_working_dir)
+        self._gpt_sovits_port = QSpinBox()
+        self._gpt_sovits_port.setRange(1024, 65535)
+        self._gpt_sovits_port.setValue(9880)
+        voice_section.add_row("GPT-SoVITS 端口", self._gpt_sovits_port)
         self._emit_asr_text_message = QCheckBox("ASR 文本显示到对话框")
         voice_section.add_widget(self._emit_asr_text_message)
 
@@ -2090,6 +2105,11 @@ class SettingsWindow(QWidget):
             self._tts_enabled.setChecked(
                 getattr(self.config.voice, "enable_local_tts", getattr(self.config.voice, "tts_enabled", True))
             )
+            backend = getattr(self.config.voice, "tts_backend", "genie_tts")
+            for i in range(self._tts_backend.count()):
+                if self._tts_backend.itemData(i) == backend:
+                    self._tts_backend.setCurrentIndex(i)
+                    break
             mode = getattr(self.config.voice, "genie_mode", "predefined")
             for i in range(self._tts_mode.count()):
                 if self._tts_mode.itemData(i) == mode:
@@ -2104,6 +2124,10 @@ class SettingsWindow(QWidget):
             self._genie_reference_audio_text.setText(getattr(self.config.voice, "genie_reference_audio_text", ""))
             self._genie_auto_play.setChecked(getattr(self.config.voice, "genie_auto_play", True))
             self._genie_data_dir.setText(getattr(self.config.voice, "genie_data_dir", ""))
+            self._gpt_sovits_python_path.setText(getattr(self.config.voice, "gpt_sovits_python_path", "python"))
+            self._gpt_sovits_api_script_path.setText(getattr(self.config.voice, "gpt_sovits_api_script_path", ""))
+            self._gpt_sovits_working_dir.setText(getattr(self.config.voice, "gpt_sovits_working_dir", ""))
+            self._gpt_sovits_port.setValue(int(getattr(self.config.voice, "gpt_sovits_port", 9880) or 9880))
             self._emit_asr_text_message.setChecked(
                 getattr(self.config.voice, "emit_asr_text_message", False)
             )
@@ -2495,7 +2519,7 @@ class SettingsWindow(QWidget):
                 "asr_enabled": self._asr_enabled.isChecked(),
                 "asr_model_path": self._asr_model_path.text().strip(),
                 "enable_local_tts": self._tts_enabled.isChecked(),
-                "tts_backend": "genie_tts",
+                "tts_backend": self._tts_backend.currentData(),
                 "genie_enabled": self._tts_enabled.isChecked(),
                 "genie_mode": self._tts_mode.currentData(),
                 "genie_predefined_character_name": self._genie_predefined_character_name.text().strip(),
@@ -2507,6 +2531,11 @@ class SettingsWindow(QWidget):
                 "genie_auto_play": self._genie_auto_play.isChecked(),
                 "genie_data_dir": self._genie_data_dir.text().strip(),
                 "genie_use_data_dir": bool(self._genie_data_dir.text().strip()),
+                "gpt_sovits_python_path": self._gpt_sovits_python_path.text().strip() or "python",
+                "gpt_sovits_api_script_path": self._gpt_sovits_api_script_path.text().strip(),
+                "gpt_sovits_working_dir": self._gpt_sovits_working_dir.text().strip(),
+                "gpt_sovits_port": self._gpt_sovits_port.value(),
+                "gpt_sovits_enabled": self._tts_backend.currentData() == "gpt_sovits",
                 "emit_asr_text_message": self._emit_asr_text_message.isChecked(),
             },
             "proactive": {
@@ -2616,7 +2645,7 @@ class SettingsWindow(QWidget):
             else:
                 self.config.voice.asr_model_path = asr_model_input
             self.config.voice.enable_local_tts = settings["voice"]["enable_local_tts"]
-            self.config.voice.tts_backend = "genie_tts"
+            self.config.voice.tts_backend = settings["voice"]["tts_backend"]
             self.config.voice.genie_enabled = settings["voice"]["genie_enabled"]
             self.config.voice.genie_mode = settings["voice"]["genie_mode"]
             self.config.voice.genie_predefined_character_name = settings["voice"]["genie_predefined_character_name"]
@@ -2628,6 +2657,11 @@ class SettingsWindow(QWidget):
             self.config.voice.genie_auto_play = settings["voice"]["genie_auto_play"]
             self.config.voice.genie_data_dir = settings["voice"]["genie_data_dir"]
             self.config.voice.genie_use_data_dir = settings["voice"]["genie_use_data_dir"]
+            self.config.voice.gpt_sovits_python_path = settings["voice"]["gpt_sovits_python_path"]
+            self.config.voice.gpt_sovits_api_script_path = settings["voice"]["gpt_sovits_api_script_path"]
+            self.config.voice.gpt_sovits_working_dir = settings["voice"]["gpt_sovits_working_dir"]
+            self.config.voice.gpt_sovits_port = settings["voice"]["gpt_sovits_port"]
+            self.config.voice.gpt_sovits_enabled = settings["voice"]["gpt_sovits_enabled"]
             self.config.voice.emit_asr_text_message = settings["voice"]["emit_asr_text_message"]
 
             # 主动对话
