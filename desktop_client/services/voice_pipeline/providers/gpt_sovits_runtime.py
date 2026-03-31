@@ -41,11 +41,17 @@ class GPTSoVITSRuntimeManager:
         script = (self.config.gpt_sovits_api_script_path or "").strip()
         if not script:
             raise RuntimeError("未配置 gpt_sovits_api_script_path")
+        if not Path(script).exists():
+            raise RuntimeError(f"GPT-SoVITS API脚本不存在: {script}")
         python_path = (self.config.gpt_sovits_python_path or "python").strip()
         workdir = (self.config.gpt_sovits_working_dir or str(Path(script).parent)).strip()
+        if not Path(workdir).exists():
+            raise RuntimeError(f"GPT-SoVITS 工作目录不存在: {workdir}")
         cmd = [python_path, script, "--host", "127.0.0.1", "--port", str(self.config.gpt_sovits_port)]
         cfg = (self.config.gpt_sovits_tts_config_path or "").strip()
         if cfg:
+            if not Path(cfg).exists():
+                raise RuntimeError(f"GPT-SoVITS tts_infer.yaml 不存在: {cfg}")
             cmd += ["--config", cfg]
         self.logger.info("启动 GPT-SoVITS 本地推理子进程: %s", " ".join(cmd))
         self._proc = subprocess.Popen(

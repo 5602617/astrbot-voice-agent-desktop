@@ -1,44 +1,38 @@
 """
-全局快捷键系统
+全局快捷键系统。
 
-提供全局热键功能，支持：
-- 显示/隐藏对话窗口
-- 区域截图
-- 全屏截图
-- 显示/隐藏悬浮球
-- 自定义快捷键配置
+实现说明：
+- 前台快捷键：Qt 事件过滤器（应用激活时）
+- 全局快捷键：pynput.keyboard.Listener（应用失焦/最小化时仍可触发）
+- ASR：支持按下/松开的全局监听
 """
 
-from typing import Dict, Optional
+from __future__ import annotations
+
+from typing import Dict, Optional, Callable
 from dataclasses import dataclass
 import logging
 
-from PySide6.QtCore import QObject, Signal, Qt
-from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import QObject, Signal, QEvent
+from PySide6.QtGui import QKeySequence, QShortcut, QKeyEvent
+from PySide6.QtWidgets import QWidget, QApplication
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class HotkeyConfig:
     """快捷键配置"""
 
-    # 显示/隐藏对话窗口
     toggle_chat: str = "Ctrl+Shift+A"
-    # 区域截图
     region_screenshot: str = "Ctrl+Shift+S"
-    # 全屏截图
     full_screenshot: str = "Ctrl+Shift+F"
-    # 显示/隐藏悬浮球
     toggle_ball: str = "Ctrl+Shift+B"
-    # 快速提问（弹出输入框）
     quick_ask: str = "Ctrl+Shift+Q"
-    # 切换主题
     cycle_theme: str = "Ctrl+Shift+T"
-    # 录音快捷键（按下开始，松开结束）
     toggle_asr: str = "Ctrl+T"
 
     def to_dict(self) -> Dict[str, str]:
-        """转换为字典"""
         return {
             "toggle_chat": self.toggle_chat,
             "region_screenshot": self.region_screenshot,
@@ -51,7 +45,6 @@ class HotkeyConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, str]) -> "HotkeyConfig":
-        """从字典创建"""
         return cls(
             toggle_chat=data.get("toggle_chat", "Ctrl+Shift+A"),
             region_screenshot=data.get("region_screenshot", "Ctrl+Shift+S"),
@@ -64,14 +57,8 @@ class HotkeyConfig:
 
 
 class HotkeyManager(QObject):
-    """
-    快捷键管理器
+    """快捷键管理器（支持应用级 + 系统级全局热键）。"""
 
-    使用 Qt 的 QShortcut 实现应用级快捷键
-    对于全局快捷键（应用未激活时也能触发），需要使用平台特定的实现
-    """
-
-    # 信号
     toggle_chat_triggered = Signal()
     region_screenshot_triggered = Signal()
     full_screenshot_triggered = Signal()
@@ -86,57 +73,63 @@ class HotkeyManager(QObject):
 
     def __new__(cls, *args, **kwargs) -> "HotkeyManager":
         if cls._instance is None:
-            instance = super().__new__(cls)
-            cls._instance = instance
+            cls._instance = super().__new__(cls)
         assert cls._instance is not None
         return cls._instance
 
     def __init__(self, parent: Optional[QWidget] = None):
         if self._initialized:
             return
-
         super().__init__(parent)
         self._initialized = True
+
         self._config = HotkeyConfig()
         self._shortcuts: Dict[str, QShortcut] = {}
         self._parent_widget = parent
         self._global_enabled = False
 
-        # 尝试导入全局快捷键库
         self._global_hotkey_available = False
+        self._keyboard = None
         self._keyboard_listener = None
         self._global_key_listener = None
+
+        self._pressed_keys: set[int] = set()
+        self._seq_cache: Dict[str, QKeySequence] = {}
+
         self._asr_hotkey: str = "Ctrl+T"
         self._asr_hotkey_enabled: bool = True
-        self._asr_hotkey_vk = None
+        self._asr_hotkey_vk: Optional[int] = None
 
         try:
-            from pynput import keyboard
+            from pynput import keyboard  # type: ignore
 
             self._global_hotkey_available = True
             self._keyboard = keyboard
+            logger.info("[HotkeyManager] 已启用系统级全局热键后端: pynput")
         except ImportError:
-            logger.warning("[HotkeyManager] pynput not available, using Qt shortcuts only")
+            logger.warning("[HotkeyManager] pynput 不可用，仅支持前台快捷键")
 
     def set_parent_widget(self, widget: QWidget):
-        """设置父窗口（用于 Qt 快捷键）"""
         self._parent_widget = widget
         self._setup_qt_shortcuts()
 
     def set_config(self, config: HotkeyConfig):
-        """设置快捷键配置"""
         self._config = config
         self._asr_hotkey = (config.toggle_asr or "Ctrl+T").strip() or "Ctrl+T"
+        logger.info("[HotkeyManager] 加载快捷键配置: %s", self._config.to_dict())
         self._setup_qt_shortcuts()
         if self._global_enabled:
             self._setup_global_hotkeys()
         self._setup_global_asr_hotkey()
 
     def set_asr_hotkey(self, key: str, enabled: bool = True):
-        """设置语音录音快捷键（全局按下/松开监听）。"""
         self._asr_hotkey = (key or "Ctrl+T").strip() or "Ctrl+T"
         self._asr_hotkey_enabled = bool(enabled)
-        logger.info("[HotkeyManager] 配置录音快捷键: key=%s enabled=%s", self._asr_hotkey, self._asr_hotkey_enabled)
+        logger.info(
+            "[HotkeyManager] 配置录音快捷键: key=%s enabled=%s",
+            self._asr_hotkey,
+            self._asr_hotkey_enabled,
+        )
         self._setup_global_asr_hotkey()
 
     @property
@@ -144,107 +137,115 @@ class HotkeyManager(QObject):
         return bool(self._global_key_listener is not None)
 
     def get_config(self) -> HotkeyConfig:
-        """获取快捷键配置"""
         return self._config
 
     def _setup_qt_shortcuts(self):
-        """设置 Qt 应用级快捷键"""
         if not self._parent_widget:
             return
 
-        # 清除旧的快捷键
         for shortcut in self._shortcuts.values():
             shortcut.deleteLater()
         self._shortcuts.clear()
 
-        # 创建新的快捷键
         shortcuts_map = {
             "toggle_chat": (self._config.toggle_chat, self.toggle_chat_triggered),
-            "region_screenshot": (
-                self._config.region_screenshot,
-                self.region_screenshot_triggered,
-            ),
-            "full_screenshot": (
-                self._config.full_screenshot,
-                self.full_screenshot_triggered,
-            ),
+            "region_screenshot": (self._config.region_screenshot, self.region_screenshot_triggered),
+            "full_screenshot": (self._config.full_screenshot, self.full_screenshot_triggered),
             "toggle_ball": (self._config.toggle_ball, self.toggle_ball_triggered),
             "quick_ask": (self._config.quick_ask, self.quick_ask_triggered),
             "cycle_theme": (self._config.cycle_theme, self.cycle_theme_triggered),
         }
-
         for name, (key_seq, signal) in shortcuts_map.items():
             if key_seq:
                 shortcut = QShortcut(QKeySequence(key_seq), self._parent_widget)
-                shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
                 shortcut.activated.connect(signal.emit)
                 self._shortcuts[name] = shortcut
+        logger.info("[HotkeyManager] Qt 应用级快捷键已注册: %s", {k: v[0] for k, v in shortcuts_map.items()})
 
     def enable_global_hotkeys(self, enabled: bool = True):
-        """启用/禁用全局快捷键"""
-        self._global_enabled = enabled
+        self._global_enabled = bool(enabled)
+        logger.info("[HotkeyManager] 全局热键开关: enabled=%s", self._global_enabled)
 
-        if enabled and self._global_hotkey_available:
+        if self._global_enabled and self._global_hotkey_available:
             self._setup_global_hotkeys()
         else:
             self._stop_global_hotkeys()
-        # ASR 全局按键监听与普通热键独立，确保后台可录音
+
         self._setup_global_asr_hotkey()
 
     def _setup_global_hotkeys(self):
-        """设置全局快捷键（使用 pynput）"""
         if not self._global_hotkey_available:
+            logger.warning("[HotkeyManager] 全局热键不可用：pynput 未安装")
             return
-
         self._stop_global_hotkeys()
 
+        action_map: dict[int, Callable[[], None]] = {}
+        action_shortcuts: Dict[str, str] = {
+            "toggle_chat": self._config.toggle_chat,
+            "region_screenshot": self._config.region_screenshot,
+            "full_screenshot": self._config.full_screenshot,
+            "toggle_ball": self._config.toggle_ball,
+            "quick_ask": self._config.quick_ask,
+            "cycle_theme": self._config.cycle_theme,
+        }
+        signal_map = {
+            "toggle_chat": self.toggle_chat_triggered,
+            "region_screenshot": self.region_screenshot_triggered,
+            "full_screenshot": self.full_screenshot_triggered,
+            "toggle_ball": self.toggle_ball_triggered,
+            "quick_ask": self.quick_ask_triggered,
+            "cycle_theme": self.cycle_theme_triggered,
+        }
+
+        parsed: dict[str, tuple[bool, bool, bool, int]] = {}
+        for action, key_seq in action_shortcuts.items():
+            combo = self._parse_combo(key_seq)
+            if combo is None:
+                logger.warning("[HotkeyManager] 跳过无效快捷键: action=%s key=%s", action, key_seq)
+                continue
+            need_ctrl, need_shift, need_alt, main_vk = combo
+            parsed[action] = (need_ctrl, need_shift, need_alt, main_vk)
+            action_map[main_vk] = lambda sig=signal_map[action], a=action: self._emit_action(sig, a)
+
+        def on_press(key):
+            vk = getattr(key, "vk", None)
+            if vk is None:
+                return
+            self._pressed_keys.add(vk)
+            for action, (need_ctrl, need_shift, need_alt, main_vk) in parsed.items():
+                if vk == main_vk and self._mods_match(need_ctrl, need_shift, need_alt):
+                    self._emit_action(signal_map[action], action)
+
+        def on_release(key):
+            vk = getattr(key, "vk", None)
+            if vk is not None and vk in self._pressed_keys:
+                self._pressed_keys.discard(vk)
+
         try:
-            from pynput import keyboard
-
-            # 解析快捷键
-            hotkeys = {}
-
-            def create_handler(signal):
-                def handler():
-                    signal.emit()
-
-                return handler
-
-            key_map = {
-                self._config.toggle_chat: self.toggle_chat_triggered,
-                self._config.region_screenshot: self.region_screenshot_triggered,
-                self._config.full_screenshot: self.full_screenshot_triggered,
-                self._config.toggle_ball: self.toggle_ball_triggered,
-                self._config.quick_ask: self.quick_ask_triggered,
-                self._config.cycle_theme: self.cycle_theme_triggered,
-            }
-
-            for key_seq, signal in key_map.items():
-                if key_seq:
-                    # 转换 Qt 格式到 pynput 格式
-                    pynput_key = self._convert_to_pynput_format(key_seq)
-                    if pynput_key:
-                        hotkeys[pynput_key] = create_handler(signal)
-
-            if hotkeys:
-                self._keyboard_listener = keyboard.GlobalHotKeys(hotkeys)
-                self._keyboard_listener.start()
-                logger.info("[HotkeyManager] Global hotkeys enabled: %s", list(hotkeys.keys()))
-
+            self._keyboard_listener = self._keyboard.Listener(on_press=on_press, on_release=on_release)
+            self._keyboard_listener.daemon = True
+            self._keyboard_listener.start()
+            logger.info("[HotkeyManager] 全局热键注册完成: %s", action_shortcuts)
+            logger.info("[HotkeyManager] action -> shortcut 映射: %s", action_shortcuts)
         except Exception as e:
-            logger.warning("[HotkeyManager] Failed to setup global hotkeys: %s", e)
+            logger.warning("[HotkeyManager] 全局热键注册失败: %s", e)
+            self._keyboard_listener = None
+
+    def _emit_action(self, signal, action: str):
+        logger.debug("[HotkeyManager] 收到热键事件: action=%s", action)
+        signal.emit()
 
     def _stop_global_hotkeys(self):
-        """停止全局快捷键监听"""
         if self._keyboard_listener:
+            logger.info("[HotkeyManager] 注销旧全局热键监听器")
             try:
                 self._keyboard_listener.stop()
             except Exception:
                 pass
             self._keyboard_listener = None
+        self._pressed_keys.clear()
 
     def _setup_global_asr_hotkey(self):
-        """设置 ASR 全局按下/松开监听（支持后台）。"""
         self._stop_global_asr_hotkey()
         if not self._asr_hotkey_enabled:
             logger.info("[HotkeyManager] ASR 全局快捷键已禁用")
@@ -253,152 +254,95 @@ class HotkeyManager(QObject):
             logger.warning("[HotkeyManager] 无法启用 ASR 全局快捷键：pynput 不可用")
             return
 
-        key_combo = self._normalize_combo(self._asr_hotkey)
-        vk, need_ctrl, need_shift, need_alt = self._resolve_combo_vk(key_combo)
-        if vk is None:
+        combo = self._parse_combo(self._asr_hotkey)
+        if combo is None:
             logger.warning("[HotkeyManager] 不支持的 ASR 快捷键: %s", self._asr_hotkey)
             return
-        self._asr_hotkey_vk = vk
-        pressed = {"ctrl": False, "shift": False, "alt": False, "recording_triggered": False}
+        need_ctrl, need_shift, need_alt, main_vk = combo
+        self._asr_hotkey_vk = main_vk
+        pressed = {"recording_triggered": False}
 
         def on_press(key):
-            self._update_modifier_state(key, pressed, is_press=True)
-            if self._match_vk(key, self._asr_hotkey_vk) and self._mods_match(pressed, need_ctrl, need_shift, need_alt):
+            vk = getattr(key, "vk", None)
+            if vk is None:
+                return
+            self._pressed_keys.add(vk)
+            if vk == main_vk and self._mods_match(need_ctrl, need_shift, need_alt):
                 if not pressed["recording_triggered"]:
                     pressed["recording_triggered"] = True
+                    logger.debug("[HotkeyManager] 收到 ASR 按下事件")
                     self.asr_hotkey_pressed.emit()
 
         def on_release(key):
-            if self._match_vk(key, self._asr_hotkey_vk) and pressed["recording_triggered"]:
-                self.asr_hotkey_released.emit()
+            vk = getattr(key, "vk", None)
+            if vk is not None:
+                self._pressed_keys.discard(vk)
+            if vk == main_vk and pressed["recording_triggered"]:
                 pressed["recording_triggered"] = False
-            self._update_modifier_state(key, pressed, is_press=False)
+                logger.debug("[HotkeyManager] 收到 ASR 松开事件")
+                self.asr_hotkey_released.emit()
 
         try:
             self._global_key_listener = self._keyboard.Listener(on_press=on_press, on_release=on_release)
             self._global_key_listener.daemon = True
             self._global_key_listener.start()
-            logger.info("[HotkeyManager] ASR 全局快捷键监听已启动: key=%s vk=%s", key_combo, vk)
+            logger.info("[HotkeyManager] ASR 全局快捷键监听已启动: key=%s", self._asr_hotkey)
         except Exception as e:
             logger.warning("[HotkeyManager] 启动 ASR 全局快捷键失败: %s", e)
             self._global_key_listener = None
 
     def _stop_global_asr_hotkey(self):
         if self._global_key_listener:
+            logger.info("[HotkeyManager] 注销旧 ASR 全局快捷键监听器")
             try:
                 self._global_key_listener.stop()
             except Exception:
                 pass
             self._global_key_listener = None
 
-    def _normalize_combo(self, key: str) -> str:
-        return (key or "Ctrl+T").strip().lower().replace(" ", "")
-
-    def _resolve_combo_vk(self, key_combo: str):
+    def _parse_combo(self, combo: str) -> Optional[tuple[bool, bool, bool, int]]:
+        key_combo = (combo or "").strip().lower().replace(" ", "")
+        if not key_combo:
+            return None
         parts = [p for p in key_combo.split("+") if p]
-        mods = set()
-        main = ""
+        need_ctrl = False
+        need_shift = False
+        need_alt = False
+        main_vk: Optional[int] = None
         for p in parts:
             if p in ("ctrl", "control"):
-                mods.add("ctrl")
+                need_ctrl = True
             elif p == "shift":
-                mods.add("shift")
+                need_shift = True
             elif p == "alt":
-                mods.add("alt")
+                need_alt = True
             else:
-                main = p
-        vk = self._resolve_vk_from_key(main)
-        return vk, ("ctrl" in mods), ("shift" in mods), ("alt" in mods)
+                main_vk = self._resolve_vk_from_key(p)
+        if main_vk is None:
+            return None
+        return need_ctrl, need_shift, need_alt, main_vk
 
-    def _resolve_vk_from_key(self, key_name: str):
-        if key_name in ("space",):
+    def _resolve_vk_from_key(self, key_name: str) -> Optional[int]:
+        if key_name == "space":
             return 32
         if len(key_name) == 1 and key_name.isalpha():
             return ord(key_name.upper())
         if len(key_name) == 1 and key_name.isdigit():
             return ord(key_name)
+        if key_name.startswith("f") and key_name[1:].isdigit():
+            n = int(key_name[1:])
+            if 1 <= n <= 24:
+                return 111 + n
         return None
 
-    def _match_vk(self, key, target_vk: int) -> bool:
-        try:
-            return getattr(key, "vk", None) == target_vk
-        except Exception:
-            return False
-
-    def _update_modifier_state(self, key, state: dict, is_press: bool):
-        try:
-            vk = getattr(key, "vk", None)
-            if vk in (162, 163):
-                state["ctrl"] = is_press
-            elif vk in (160, 161):
-                state["shift"] = is_press
-            elif vk in (164, 165):
-                state["alt"] = is_press
-        except Exception:
-            pass
-
-    def _mods_match(self, state: dict, need_ctrl: bool, need_shift: bool, need_alt: bool) -> bool:
-        return (
-            state["ctrl"] == need_ctrl
-            and state["shift"] == need_shift
-            and state["alt"] == need_alt
-        )
-
-
-    def _convert_to_pynput_format(self, qt_key: str) -> Optional[str]:
-        """
-        将 Qt 快捷键格式转换为 pynput 格式
-
-        Qt: "Ctrl+Shift+A"
-        pynput: "<ctrl>+<shift>+a"
-        """
-        if not qt_key:
-            return None
-
-        parts = qt_key.lower().split("+")
-        result = []
-
-        for part in parts:
-            part = part.strip()
-            if part == "ctrl":
-                result.append("<ctrl>")
-            elif part == "shift":
-                result.append("<shift>")
-            elif part == "alt":
-                result.append("<alt>")
-            elif part == "meta" or part == "win":
-                result.append("<cmd>")
-            elif len(part) == 1:
-                result.append(part)
-            else:
-                # 特殊键
-                special_keys = {
-                    "space": "<space>",
-                    "enter": "<enter>",
-                    "return": "<enter>",
-                    "tab": "<tab>",
-                    "escape": "<esc>",
-                    "esc": "<esc>",
-                    "backspace": "<backspace>",
-                    "delete": "<delete>",
-                    "home": "<home>",
-                    "end": "<end>",
-                    "pageup": "<page_up>",
-                    "pagedown": "<page_down>",
-                    "up": "<up>",
-                    "down": "<down>",
-                    "left": "<left>",
-                    "right": "<right>",
-                }
-                if part in special_keys:
-                    result.append(special_keys[part])
-                else:
-                    result.append(part)
-
-        return "+".join(result)
+    def _mods_match(self, need_ctrl: bool, need_shift: bool, need_alt: bool) -> bool:
+        has_ctrl = (162 in self._pressed_keys) or (163 in self._pressed_keys)
+        has_shift = (160 in self._pressed_keys) or (161 in self._pressed_keys)
+        has_alt = (164 in self._pressed_keys) or (165 in self._pressed_keys)
+        return has_ctrl == need_ctrl and has_shift == need_shift and has_alt == need_alt
 
     def cleanup(self):
-        """清理资源"""
+        logger.info("[HotkeyManager] 清理热键资源")
         self._stop_global_hotkeys()
         self._stop_global_asr_hotkey()
         for shortcut in self._shortcuts.values():
@@ -406,25 +350,19 @@ class HotkeyManager(QObject):
         self._shortcuts.clear()
 
 
-# 延迟初始化全局实例
 _hotkey_manager: Optional[HotkeyManager] = None
 
 
 def get_hotkey_manager() -> HotkeyManager:
-    """获取快捷键管理器实例"""
     global _hotkey_manager
     if _hotkey_manager is None:
         _hotkey_manager = HotkeyManager()
     return _hotkey_manager
 
 
-# 为向后兼容保留的属性访问
 class _HotkeyManagerProxy:
-    """代理类，用于延迟初始化"""
-
     def __getattr__(self, name):
         return getattr(get_hotkey_manager(), name)
 
 
 hotkey_manager = _HotkeyManagerProxy()  # type: ignore
-logger = logging.getLogger(__name__)
