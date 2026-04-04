@@ -28,7 +28,6 @@ class HotkeyConfig:
     region_screenshot: str = "Ctrl+Shift+S"
     full_screenshot: str = "Ctrl+Shift+F"
     toggle_ball: str = "Ctrl+Shift+B"
-    quick_ask: str = "Ctrl+Shift+Q"
     cycle_theme: str = "Ctrl+Shift+T"
     toggle_asr: str = "Ctrl+T"
 
@@ -38,7 +37,6 @@ class HotkeyConfig:
             "region_screenshot": self.region_screenshot,
             "full_screenshot": self.full_screenshot,
             "toggle_ball": self.toggle_ball,
-            "quick_ask": self.quick_ask,
             "cycle_theme": self.cycle_theme,
             "toggle_asr": self.toggle_asr,
         }
@@ -50,7 +48,6 @@ class HotkeyConfig:
             region_screenshot=data.get("region_screenshot", "Ctrl+Shift+S"),
             full_screenshot=data.get("full_screenshot", "Ctrl+Shift+F"),
             toggle_ball=data.get("toggle_ball", "Ctrl+Shift+B"),
-            quick_ask=data.get("quick_ask", "Ctrl+Shift+Q"),
             cycle_theme=data.get("cycle_theme", "Ctrl+Shift+T"),
             toggle_asr=data.get("toggle_asr", "Ctrl+T"),
         )
@@ -63,10 +60,10 @@ class HotkeyManager(QObject):
     region_screenshot_triggered = Signal()
     full_screenshot_triggered = Signal()
     toggle_ball_triggered = Signal()
-    quick_ask_triggered = Signal()
     cycle_theme_triggered = Signal()
     asr_hotkey_pressed = Signal()
     asr_hotkey_released = Signal()
+    action_dispatched = Signal(str)
 
     _instance: Optional["HotkeyManager"] = None
     _initialized: bool = False
@@ -96,9 +93,15 @@ class HotkeyManager(QObject):
         self._pressed_keys: set[int] = set()
         self._seq_cache: Dict[str, QKeySequence] = {}
 
+        # 普通全局热键分发
+        self.action_dispatched.connect(self._handle_dispatched_action)
+
+        # ASR 全局热键状态
         self._asr_hotkey: str = "Ctrl+T"
         self._asr_hotkey_enabled: bool = True
-        self._asr_hotkey_vk: Optional[int] = None
+        self._asr_required_keys: set[str] = set()
+        self._asr_pressed_keys: set[str] = set()
+        self._asr_recording_triggered: bool = False
 
         try:
             from pynput import keyboard  # type: ignore
@@ -122,14 +125,16 @@ class HotkeyManager(QObject):
             self._setup_global_hotkeys()
         self._setup_global_asr_hotkey()
 
-    def set_asr_hotkey(self, key: str, enabled: bool = True):
-        self._asr_hotkey = (key or "Ctrl+T").strip() or "Ctrl+T"
+    def set_asr_hotkey(self, hotkey: str, enabled: bool = True):
+        self._asr_hotkey = (hotkey or "Ctrl+T").strip()
         self._asr_hotkey_enabled = bool(enabled)
+
         logger.info(
-            "[HotkeyManager] 配置录音快捷键: key=%s enabled=%s",
+            "[HotkeyManager] 设置 ASR 热键: hotkey=%s enabled=%s",
             self._asr_hotkey,
             self._asr_hotkey_enabled,
         )
+
         self._setup_global_asr_hotkey()
 
     @property
@@ -152,7 +157,6 @@ class HotkeyManager(QObject):
             "region_screenshot": (self._config.region_screenshot, self.region_screenshot_triggered),
             "full_screenshot": (self._config.full_screenshot, self.full_screenshot_triggered),
             "toggle_ball": (self._config.toggle_ball, self.toggle_ball_triggered),
-            "quick_ask": (self._config.quick_ask, self.quick_ask_triggered),
             "cycle_theme": (self._config.cycle_theme, self.cycle_theme_triggered),
         }
         for name, (key_seq, signal) in shortcuts_map.items():
@@ -164,14 +168,23 @@ class HotkeyManager(QObject):
 
     def enable_global_hotkeys(self, enabled: bool = True):
         self._global_enabled = bool(enabled)
-        logger.info("[HotkeyManager] 全局热键开关: enabled=%s", self._global_enabled)
+        logger.info(
+            "[HotkeyManager] 全局热键开关: enabled=%s, backend_available=%s",
+            self._global_enabled,
+            self._global_hotkey_available,
+        )
 
         if self._global_enabled and self._global_hotkey_available:
+            logger.info("[HotkeyManager] 即将注册系统级全局热键")
             self._setup_global_hotkeys()
         else:
+            logger.info("[HotkeyManager] 不注册系统级全局热键，转为停止监听")
             self._stop_global_hotkeys()
 
+        # ASR 热键独立维护
         self._setup_global_asr_hotkey()
+
+
 
     def _setup_global_hotkeys(self):
         if not self._global_hotkey_available:
@@ -179,13 +192,11 @@ class HotkeyManager(QObject):
             return
         self._stop_global_hotkeys()
 
-        action_map: dict[int, Callable[[], None]] = {}
         action_shortcuts: Dict[str, str] = {
             "toggle_chat": self._config.toggle_chat,
             "region_screenshot": self._config.region_screenshot,
             "full_screenshot": self._config.full_screenshot,
             "toggle_ball": self._config.toggle_ball,
-            "quick_ask": self._config.quick_ask,
             "cycle_theme": self._config.cycle_theme,
         }
         signal_map = {
@@ -193,101 +204,218 @@ class HotkeyManager(QObject):
             "region_screenshot": self.region_screenshot_triggered,
             "full_screenshot": self.full_screenshot_triggered,
             "toggle_ball": self.toggle_ball_triggered,
-            "quick_ask": self.quick_ask_triggered,
             "cycle_theme": self.cycle_theme_triggered,
         }
 
-        parsed: dict[str, tuple[bool, bool, bool, int]] = {}
+        mapping = {}
         for action, key_seq in action_shortcuts.items():
-            combo = self._parse_combo(key_seq)
-            if combo is None:
+            combo = self._to_pynput_combo(key_seq)
+            logger.info("[HotkeyManager] 注册热键: action=%s raw=%s combo=%s", action, key_seq, combo)
+            if not combo:
                 logger.warning("[HotkeyManager] 跳过无效快捷键: action=%s key=%s", action, key_seq)
                 continue
-            need_ctrl, need_shift, need_alt, main_vk = combo
-            parsed[action] = (need_ctrl, need_shift, need_alt, main_vk)
-            action_map[main_vk] = lambda sig=signal_map[action], a=action: self._emit_action(sig, a)
+            mapping[combo] = self._build_action_callback(signal_map[action], action)
 
-        def on_press(key):
-            vk = getattr(key, "vk", None)
-            if vk is None:
-                return
-            self._pressed_keys.add(vk)
-            for action, (need_ctrl, need_shift, need_alt, main_vk) in parsed.items():
-                if vk == main_vk and self._mods_match(need_ctrl, need_shift, need_alt):
-                    self._emit_action(signal_map[action], action)
-
-        def on_release(key):
-            vk = getattr(key, "vk", None)
-            if vk is not None and vk in self._pressed_keys:
-                self._pressed_keys.discard(vk)
+        if not mapping:
+            logger.warning("[HotkeyManager] 没有可注册的全局快捷键")
+            return
 
         try:
-            self._keyboard_listener = self._keyboard.Listener(on_press=on_press, on_release=on_release)
+            self._keyboard_listener = self._keyboard.GlobalHotKeys(mapping)
             self._keyboard_listener.daemon = True
             self._keyboard_listener.start()
-            logger.info("[HotkeyManager] 全局热键注册完成: %s", action_shortcuts)
-            logger.info("[HotkeyManager] action -> shortcut 映射: %s", action_shortcuts)
+            logger.info("[HotkeyManager] 全局热键注册完成: %s", mapping)
+
         except Exception as e:
             logger.warning("[HotkeyManager] 全局热键注册失败: %s", e)
             self._keyboard_listener = None
 
-    def _emit_action(self, signal, action: str):
-        logger.debug("[HotkeyManager] 收到热键事件: action=%s", action)
+    def _build_action_callback(self, signal, action: str):
+        def _callback():
+            logger.info("[HotkeyManager] pynput 回调命中: %s", action)
+            self.action_dispatched.emit(action)
+
+        return _callback
+
+    def _handle_dispatched_action(self, action: str):
+        logger.info("[HotkeyManager] 主线程处理热键动作: %s", action)
+
+        signal_map = {
+            "toggle_chat": self.toggle_chat_triggered,
+            "region_screenshot": self.region_screenshot_triggered,
+            "full_screenshot": self.full_screenshot_triggered,
+            "toggle_ball": self.toggle_ball_triggered,
+            "cycle_theme": self.cycle_theme_triggered,
+        }
+
+        signal = signal_map.get(action)
+        if signal is None:
+            logger.warning("[HotkeyManager] 未知热键动作: %s", action)
+            return
+
         signal.emit()
 
     def _stop_global_hotkeys(self):
         if self._keyboard_listener:
-            logger.info("[HotkeyManager] 注销旧全局热键监听器")
             try:
                 self._keyboard_listener.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("[HotkeyManager] 停止全局热键监听失败: %s", e)
             self._keyboard_listener = None
-        self._pressed_keys.clear()
+
+    def _to_pynput_combo(self, combo: str) -> Optional[str]:
+        key_combo = (combo or "").strip().lower().replace(" ", "")
+        if not key_combo:
+            return None
+
+        parts = [p for p in key_combo.split("+") if p]
+        converted = []
+        for part in parts:
+            token = self._key_name_to_pynput_part(part)
+            if not token:
+                return None
+            converted.append(token)
+
+        return "+".join(converted) if converted else None
+
+    def _key_name_to_pynput_part(self, key_name: str) -> Optional[str]:
+        token = self._key_name_to_token(key_name)
+        if not token:
+            return None
+
+        if token == "ctrl":
+            return "<ctrl>"
+        if token == "shift":
+            return "<shift>"
+        if token == "alt":
+            return "<alt>"
+        if token == "space":
+            return "<space>"
+        if token.startswith("f") and token[1:].isdigit():
+            return f"<{token}>"
+
+        return token
+
+    def _key_name_to_token(self, key_name: str) -> Optional[str]:
+        key_name = (key_name or "").strip().lower()
+
+        if key_name in ("ctrl", "control"):
+            return "ctrl"
+        if key_name == "shift":
+            return "shift"
+        if key_name == "alt":
+            return "alt"
+        if key_name in ("space", "spacebar"):
+            return "space"
+
+        if len(key_name) == 1 and (key_name.isalpha() or key_name.isdigit()):
+            return key_name.lower()
+
+        if key_name.startswith("f") and key_name[1:].isdigit():
+            n = int(key_name[1:])
+            if 1 <= n <= 24:
+                return f"f{n}"
+
+        return None
+
+
+    # def _emit_action(self, signal, action: str):
+    #     logger.debug("[HotkeyManager] 收到热键事件: action=%s", action)
+    #     signal.emit()
 
     def _setup_global_asr_hotkey(self):
         self._stop_global_asr_hotkey()
+
         if not self._asr_hotkey_enabled:
             logger.info("[HotkeyManager] ASR 全局快捷键已禁用")
             return
+
         if not self._global_hotkey_available:
             logger.warning("[HotkeyManager] 无法启用 ASR 全局快捷键：pynput 不可用")
             return
 
-        combo = self._parse_combo(self._asr_hotkey)
-        if combo is None:
+        required_keys = self._parse_key_tokens(self._asr_hotkey)
+        if not required_keys:
             logger.warning("[HotkeyManager] 不支持的 ASR 快捷键: %s", self._asr_hotkey)
             return
-        need_ctrl, need_shift, need_alt, main_vk = combo
-        self._asr_hotkey_vk = main_vk
-        pressed = {"recording_triggered": False}
-        pressed_keys: set[int] = set()
+
+        self._asr_required_keys = required_keys
+        self._asr_pressed_keys = set()
+        self._asr_combo_down = False
+
+        logger.info(
+            "[HotkeyManager] ASR 热键开始监听: hotkey=%s required=%s",
+            self._asr_hotkey,
+            sorted(self._asr_required_keys),
+        )
 
         def on_press(key):
-            vk = getattr(key, "vk", None)
-            if vk is None:
+            key_token = self._normalize_pynput_key(key)
+            if not key_token:
                 return
-            pressed_keys.add(vk)
-            has_ctrl = (162 in pressed_keys) or (163 in pressed_keys)
-            has_shift = (160 in pressed_keys) or (161 in pressed_keys)
-            has_alt = (164 in pressed_keys) or (165 in pressed_keys)
-            if vk == main_vk and (has_ctrl if need_ctrl else True) and (has_shift if need_shift else True) and (has_alt if need_alt else True):
-                if not pressed["recording_triggered"]:
-                    pressed["recording_triggered"] = True
-                    logger.debug("[HotkeyManager] 收到 ASR 按下事件")
-                    self.asr_hotkey_pressed.emit()
+
+            # 忽略自动重复
+            if key_token in self._asr_pressed_keys:
+                return
+
+            before_pressed = set(self._asr_pressed_keys)
+            before_combo_down = self._asr_combo_down
+
+            self._asr_pressed_keys.add(key_token)
+
+            logger.debug(
+                "[HotkeyManager] ASR on_press: key=%s before=%s after=%s required=%s combo_down=%s",
+                key_token,
+                sorted(before_pressed),
+                sorted(self._asr_pressed_keys),
+                sorted(self._asr_required_keys),
+                before_combo_down,
+            )
+
+            combo_now = self._asr_required_keys.issubset(self._asr_pressed_keys)
+
+            # 只在第一次完整按下时触发
+            if combo_now and not self._asr_combo_down:
+                self._asr_combo_down = True
+                logger.info("[HotkeyManager] ASR 按下命中，开始录音")
+                self.asr_hotkey_pressed.emit()
 
         def on_release(key):
-            vk = getattr(key, "vk", None)
-            if vk is not None:
-                pressed_keys.discard(vk)
-            if vk == main_vk and pressed["recording_triggered"]:
-                pressed["recording_triggered"] = False
-                logger.debug("[HotkeyManager] 收到 ASR 松开事件")
+            key_token = self._normalize_pynput_key(key)
+            if not key_token:
+                return
+
+            # 没记录过的键直接忽略
+            if key_token not in self._asr_pressed_keys:
+                return
+
+            before_pressed = set(self._asr_pressed_keys)
+            before_combo_down = self._asr_combo_down
+
+            self._asr_pressed_keys.discard(key_token)
+
+            logger.debug(
+                "[HotkeyManager] ASR on_release: key=%s before=%s after=%s required=%s combo_down=%s",
+                key_token,
+                sorted(before_pressed),
+                sorted(self._asr_pressed_keys),
+                sorted(self._asr_required_keys),
+                before_combo_down,
+            )
+
+            combo_now = self._asr_required_keys.issubset(self._asr_pressed_keys)
+
+            # 只在组合键第一次被破坏时触发结束
+            if self._asr_combo_down and not combo_now:
+                self._asr_combo_down = False
+                logger.info("[HotkeyManager] ASR 松开命中，结束录音")
                 self.asr_hotkey_released.emit()
 
         try:
-            self._global_key_listener = self._keyboard.Listener(on_press=on_press, on_release=on_release)
+            self._global_key_listener = self._keyboard.Listener(
+                on_press=on_press,
+                on_release=on_release,
+            )
             self._global_key_listener.daemon = True
             self._global_key_listener.start()
             logger.info("[HotkeyManager] ASR 全局快捷键监听已启动: key=%s", self._asr_hotkey)
@@ -295,55 +423,77 @@ class HotkeyManager(QObject):
             logger.warning("[HotkeyManager] 启动 ASR 全局快捷键失败: %s", e)
             self._global_key_listener = None
 
+    def _parse_key_tokens(self, combo: str) -> set[str]:
+        key_combo = (combo or "").strip().lower().replace(" ", "")
+        if not key_combo:
+            return set()
+
+        result: set[str] = set()
+        for part in [p for p in key_combo.split("+") if p]:
+            token = self._key_name_to_token(part)
+            if not token:
+                return set()
+            result.add(token)
+        return result
+
+    def _normalize_pynput_key(self, key) -> Optional[str]:
+        if not self._keyboard:
+            return None
+
+        key_enum = getattr(self._keyboard, "Key", None)
+        key_code_cls = getattr(self._keyboard, "KeyCode", None)
+
+        if key_enum is not None:
+            if key in (key_enum.ctrl, getattr(key_enum, "ctrl_l", None), getattr(key_enum, "ctrl_r", None)):
+                return "ctrl"
+            if key in (key_enum.shift, getattr(key_enum, "shift_l", None), getattr(key_enum, "shift_r", None)):
+                return "shift"
+            if key in (key_enum.alt, getattr(key_enum, "alt_l", None), getattr(key_enum, "alt_r", None),
+                       getattr(key_enum, "alt_gr", None)):
+                return "alt"
+            if key == key_enum.space:
+                return "space"
+
+            key_name = getattr(key, "name", None)
+            if isinstance(key_name, str) and key_name.startswith("f") and key_name[1:].isdigit():
+                n = int(key_name[1:])
+                if 1 <= n <= 24:
+                    return key_name.lower()
+
+        if key_code_cls is not None and isinstance(key, key_code_cls):
+            vk = getattr(key, "vk", None)
+            char = getattr(key, "char", None)
+
+            # 先优先用可见字符
+            if isinstance(char, str) and len(char) == 1 and char.isprintable() and char.isalnum():
+                return char.lower()
+
+            # Ctrl+字母时，char 可能是控制字符，例如 Ctrl+T -> \x14
+            # 这种情况优先回退到 vk
+            if isinstance(vk, int):
+                if 65 <= vk <= 90:  # A-Z
+                    return chr(vk).lower()
+                if 48 <= vk <= 57:  # 0-9
+                    return chr(vk)
+
+            # 最后再兜底处理普通可打印字符
+            if isinstance(char, str) and len(char) == 1 and char.isprintable():
+                return char.lower()
+
+        return None
+
     def _stop_global_asr_hotkey(self):
         if self._global_key_listener:
             logger.info("[HotkeyManager] 注销旧 ASR 全局快捷键监听器")
             try:
                 self._global_key_listener.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("[HotkeyManager] 停止 ASR 全局热键监听失败: %s", e)
             self._global_key_listener = None
 
-    def _parse_combo(self, combo: str) -> Optional[tuple[bool, bool, bool, int]]:
-        key_combo = (combo or "").strip().lower().replace(" ", "")
-        if not key_combo:
-            return None
-        parts = [p for p in key_combo.split("+") if p]
-        need_ctrl = False
-        need_shift = False
-        need_alt = False
-        main_vk: Optional[int] = None
-        for p in parts:
-            if p in ("ctrl", "control"):
-                need_ctrl = True
-            elif p == "shift":
-                need_shift = True
-            elif p == "alt":
-                need_alt = True
-            else:
-                main_vk = self._resolve_vk_from_key(p)
-        if main_vk is None:
-            return None
-        return need_ctrl, need_shift, need_alt, main_vk
+        self._asr_pressed_keys = set()
+        self._asr_recording_triggered = False
 
-    def _resolve_vk_from_key(self, key_name: str) -> Optional[int]:
-        if key_name == "space":
-            return 32
-        if len(key_name) == 1 and key_name.isalpha():
-            return ord(key_name.upper())
-        if len(key_name) == 1 and key_name.isdigit():
-            return ord(key_name)
-        if key_name.startswith("f") and key_name[1:].isdigit():
-            n = int(key_name[1:])
-            if 1 <= n <= 24:
-                return 111 + n
-        return None
-
-    def _mods_match(self, need_ctrl: bool, need_shift: bool, need_alt: bool) -> bool:
-        has_ctrl = (162 in self._pressed_keys) or (163 in self._pressed_keys)
-        has_shift = (160 in self._pressed_keys) or (161 in self._pressed_keys)
-        has_alt = (164 in self._pressed_keys) or (165 in self._pressed_keys)
-        return (has_ctrl if need_ctrl else True) and (has_shift if need_shift else True) and (has_alt if need_alt else True)
 
     def cleanup(self):
         logger.info("[HotkeyManager] 清理热键资源")

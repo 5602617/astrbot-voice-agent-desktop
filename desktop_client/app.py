@@ -14,7 +14,6 @@ AstrBot 桌面客户端主应用 (QAsync 重构版)
 - 组件组装和连接
 - 生命周期管理
 """
-
 import asyncio
 import errno
 import os
@@ -109,6 +108,11 @@ class DesktopClientApp(QObject):
         self._plugin_manager = get_plugin_manager()
         self._plugin_manager.app_bridge = self._bridge
         self._plugin_manager.app_config = self.config
+        self._plugin_manager.app_instance = self
+        self._chat_toggle_busy = False
+        self._chat_window_target_visible = False
+        if self._floating_ball:
+            self._chat_window_target_visible = self._floating_ball._compact_window.isVisible()
 
     def _init_handlers(self):
         """初始化处理器和控制器"""
@@ -542,6 +546,20 @@ class DesktopClientApp(QObject):
         self._settings_window.settings_changed.connect(
             self._settings_controller.on_settings_changed
         )
+        self._settings_window.manual_start_gpt_sovits_requested.connect(
+            lambda: asyncio.ensure_future(self._manual_start_gpt_sovits())
+        )
+        self._settings_window.manual_stop_gpt_sovits_requested.connect(
+            lambda: asyncio.ensure_future(self._manual_stop_gpt_sovits())
+        )
+        self._gpt_sovits_status_timer = QTimer(self)
+        self._gpt_sovits_status_timer.setInterval(2000)
+        self._gpt_sovits_status_timer.timeout.connect(
+            lambda: asyncio.ensure_future(self._refresh_gpt_sovits_status())
+        )
+        self._gpt_sovits_status_timer.start()
+
+        asyncio.ensure_future(self._refresh_gpt_sovits_status())
         logger.debug("设置窗口创建完成")
 
         # 创建更新服务并绑定到设置窗口
@@ -591,15 +609,30 @@ class DesktopClientApp(QObject):
 
     def _init_hotkeys(self):
         """初始化快捷键"""
-        from .gui.hotkeys import hotkey_manager
+        logger.info("[App] 开始初始化热键")
+
+        from .gui.hotkeys import hotkey_manager, HotkeyConfig
 
         self._hotkey_manager = hotkey_manager
+        logger.info("[App] HotkeyManager 实例: %r", self._hotkey_manager)
 
         if self._floating_ball:
             self._hotkey_manager.set_parent_widget(self._floating_ball)
-        from .gui.hotkeys import HotkeyConfig
-        self._hotkey_manager.set_config(HotkeyConfig.from_dict(vars(self.config.hotkeys)))
-        self._hotkey_manager.enable_global_hotkeys(getattr(self.config.hotkeys, "global_enabled", False))
+            logger.info("[App] 已设置热键父窗口: %r", self._floating_ball)
+        else:
+            logger.warning("[App] _floating_ball 为空，前台快捷键可能无法正常工作")
+
+        hotkey_cfg = HotkeyConfig.from_dict(vars(self.config.hotkeys))
+        logger.info("[App] 热键配置: %s", hotkey_cfg.to_dict())
+        logger.info(
+            "[App] global_enabled=%s",
+            getattr(self.config.hotkeys, "global_enabled", False),
+        )
+
+        self._hotkey_manager.set_config(hotkey_cfg)
+        self._hotkey_manager.enable_global_hotkeys(
+            getattr(self.config.hotkeys, "global_enabled", False)
+        )
 
         self._hotkey_manager.toggle_chat_triggered.connect(self._toggle_chat_window)
         self._hotkey_manager.region_screenshot_triggered.connect(
@@ -609,15 +642,19 @@ class DesktopClientApp(QObject):
             lambda: self._screenshot_handler.on_screenshot("full")
         )
         self._hotkey_manager.toggle_ball_triggered.connect(self._toggle_floating_ball)
-        self._hotkey_manager.quick_ask_triggered.connect(self._show_quick_ask)
+
         self._hotkey_manager.cycle_theme_triggered.connect(self._cycle_theme)
         self._hotkey_manager.asr_hotkey_pressed.connect(self._on_global_asr_hotkey_pressed)
         self._hotkey_manager.asr_hotkey_released.connect(self._on_global_asr_hotkey_released)
 
+        logger.info("[App] 热键信号连接完成")
+
         asr_hotkey = (getattr(self.config.hotkeys, "toggle_asr", "Ctrl+T") or "Ctrl+T").strip()
         asr_enabled = True
         self._hotkey_manager.set_asr_hotkey(asr_hotkey, enabled=asr_enabled)
-        logger.info("ASR 热键已初始化: key=%s enabled=%s", asr_hotkey, asr_enabled)
+        logger.info("[App] ASR 热键已初始化: key=%s enabled=%s", asr_hotkey, asr_enabled)
+
+        logger.info("[App] 热键初始化完成")
 
     # ==================== 事件处理 ====================
 
@@ -655,8 +692,71 @@ class DesktopClientApp(QObject):
         self._show_bubble_input()
 
     def _toggle_chat_window(self):
-        """切换对话窗口显示 (兼容旧接口)"""
-        self._show_bubble_input()
+        """切换对话窗口显示"""
+        if not self._floating_ball:
+            logger.warning("[App] 热键切换失败：_floating_ball 不存在")
+            return
+
+        if self._chat_toggle_busy:
+            logger.info("[App] 热键切换被忽略：上一次切换尚未完成")
+            return
+
+        compact = self._floating_ball._compact_window
+
+        # 不再完全依赖 isVisible()，而是维护一个目标状态
+        current_visible = compact.isVisible()
+        self._chat_window_target_visible = not current_visible
+        self._chat_toggle_busy = True
+
+        logger.info(
+            "[App] 热键切换请求: current_visible=%s target_visible=%s",
+            current_visible,
+            self._chat_window_target_visible,
+        )
+
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._apply_chat_window_toggle)
+
+    def _apply_chat_window_toggle(self):
+        """真正执行聊天窗口切换"""
+        try:
+            if not self._floating_ball:
+                return
+
+            compact = self._floating_ball._compact_window
+
+            if self._chat_window_target_visible:
+                logger.info("[App] 执行显示聊天窗口")
+                compact.show()
+                compact.raise_()
+                compact.activateWindow()
+
+                # 如果你原来的 show_input() 还负责输入框聚焦，可以放在 show 之后
+                try:
+                    self._floating_ball.show_input()
+                except Exception:
+                    logger.exception("[App] 调用 show_input() 失败")
+            else:
+                logger.info("[App] 执行隐藏聊天窗口")
+                compact.hide()
+
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+
+            logger.info(
+                "[App] 切换完成: actual_visible=%s target_visible=%s",
+                compact.isVisible(),
+                self._chat_window_target_visible,
+            )
+        except Exception:
+            logger.exception("[App] 聊天窗口切换失败")
+        finally:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(120, self._release_chat_toggle_busy)
+
+    def _release_chat_toggle_busy(self):
+        self._chat_toggle_busy = False
+        logger.info("[App] 热键切换锁已释放")
 
     def _toggle_floating_ball(self):
         """切换悬浮球显示"""
@@ -666,9 +766,6 @@ class DesktopClientApp(QObject):
             else:
                 self._floating_ball.show()
 
-    def _show_quick_ask(self):
-        """显示快速提问"""
-        self._show_bubble_input()
 
     def _cycle_theme(self):
         """循环切换主题"""
@@ -993,8 +1090,99 @@ class DesktopClientApp(QObject):
         if self._app:
             self._app.quit()
 
+    def _get_local_voice_bridge_plugin(self):
+        """获取本地语音桥接插件实例"""
+        try:
+            plugin = self._plugin_manager.get_plugin("local_voice_bridge")
+            return plugin
+        except Exception:
+            logger.exception("获取 local_voice_bridge 插件失败")
+            return None
+
+    async def _refresh_gpt_sovits_status(self):
+        plugin = self._get_local_voice_bridge_plugin()
+        if not plugin:
+            if self._settings_window:
+                self._settings_window.update_gpt_sovits_runtime_status("GPT-SoVITS 状态：插件不可用")
+            return
+
+        try:
+            status = await plugin.get_gpt_sovits_status()
+            if self._settings_window and hasattr(self._settings_window, "update_gpt_sovits_runtime_status_from_dict"):
+                self._settings_window.update_gpt_sovits_runtime_status_from_dict(status)
+            elif self._settings_window:
+                self._settings_window.update_gpt_sovits_runtime_status(
+                    f"GPT-SoVITS 状态：{status.get('detail', '未知')}"
+                )
+        except Exception as e:
+            logger.exception("刷新 GPT-SoVITS 状态失败")
+            if self._settings_window:
+                self._settings_window.update_gpt_sovits_runtime_status(f"GPT-SoVITS 状态：刷新失败 {e}")
+
+    async def _manual_start_gpt_sovits(self):
+        """手动启动 GPT-SoVITS"""
+        plugin = self._get_local_voice_bridge_plugin()
+        if not plugin:
+            if self._floating_ball:
+                self._floating_ball.show_system_message("未找到 local_voice_bridge 插件")
+            if self._settings_window:
+                self._settings_window.update_gpt_sovits_runtime_status(
+                    "GPT-SoVITS 状态：插件不可用"
+                )
+            return
+
+        try:
+            ok = await plugin.start_gpt_sovits()
+            if ok:
+                if self._floating_ball:
+                    self._floating_ball.show_system_message("GPT-SoVITS 启动成功")
+            else:
+                if self._floating_ball:
+                    self._floating_ball.show_system_message("GPT-SoVITS 启动失败")
+
+            await self._refresh_gpt_sovits_status()
+        except Exception as e:
+            logger.exception("手动启动 GPT-SoVITS 失败")
+            if self._floating_ball:
+                self._floating_ball.show_system_message(f"启动失败: {e}")
+            await self._refresh_gpt_sovits_status()
+
+    async def _manual_stop_gpt_sovits(self):
+        """手动关闭 GPT-SoVITS"""
+        plugin = self._get_local_voice_bridge_plugin()
+        if not plugin:
+            if self._floating_ball:
+                self._floating_ball.show_system_message("未找到 local_voice_bridge 插件")
+            if self._settings_window:
+                self._settings_window.update_gpt_sovits_runtime_status(
+                    "GPT-SoVITS 状态：插件不可用"
+                )
+            return
+
+        try:
+            ok = await plugin.stop_gpt_sovits()
+            if ok:
+                if self._floating_ball:
+                    self._floating_ball.show_system_message("GPT-SoVITS 已关闭")
+            else:
+                if self._floating_ball:
+                    self._floating_ball.show_system_message("GPT-SoVITS 关闭失败")
+
+            await self._refresh_gpt_sovits_status()
+        except Exception as e:
+            logger.exception("手动关闭 GPT-SoVITS 失败")
+            if self._floating_ball:
+                self._floating_ball.show_system_message(f"关闭失败: {e}")
+            await self._refresh_gpt_sovits_status()
+
     def _quit(self):
         """退出应用"""
+        if hasattr(self, "_gpt_sovits_status_timer") and self._gpt_sovits_status_timer:
+            self._gpt_sovits_status_timer.stop()
+        asyncio.ensure_future(self._async_quit())
+
+    async def _async_quit(self):
+        """异步退出应用，确保本地语音运行时和 GPT-SoVITS 子进程被正确关闭"""
         if self._proactive_service:
             self._proactive_service.stop()
             logger.debug("主动对话服务已停止")
@@ -1004,8 +1192,33 @@ class DesktopClientApp(QObject):
         if self._hotkey_manager:
             self._hotkey_manager.cleanup()
 
-        asyncio.ensure_future(self._plugin_manager.stop())
-        asyncio.ensure_future(self._bridge.disconnect_server())
+        plugin = self._get_local_voice_bridge_plugin()
+        if plugin:
+            try:
+                await plugin.stop_gpt_sovits(force=True)
+                logger.info("退出前已关闭 GPT-SoVITS")
+            except Exception:
+                logger.exception("退出前关闭 GPT-SoVITS 失败")
+
+        try:
+            await self._plugin_manager.stop()
+        except Exception:
+            logger.exception("停止插件管理器失败")
+
+        try:
+            await self._bridge.disconnect_server()
+        except Exception:
+            logger.exception("断开服务器失败")
+
+        try:
+            await self._cleanup_cache_files()
+        except Exception:
+            logger.exception("退出前清理缓存失败")
+
+        try:
+            await asyncio.sleep(0.10)
+        except Exception:
+            pass
 
         if self._app:
             self._app.quit()
@@ -1071,6 +1284,116 @@ class DesktopClientApp(QObject):
                 audio_bytes, sample_rate, self.config.session_id or ""
             )
         return None
+
+    async def _cleanup_cache_files(self) -> None:
+        """退出前清理缓存文件（TTS缓存 + 录音临时文件）"""
+        import os
+        import shutil
+        import tempfile
+        from pathlib import Path
+
+        removed_files = 0
+        removed_dirs = 0
+
+        def _safe_unlink(path: Path) -> None:
+            nonlocal removed_files
+            try:
+                if path.exists() and path.is_file():
+                    path.unlink(missing_ok=True)
+                    removed_files += 1
+            except Exception:
+                logger.debug("删除缓存文件失败: %s", path, exc_info=True)
+
+        def _safe_rmtree(path: Path) -> None:
+            nonlocal removed_dirs
+            try:
+                if path.exists() and path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                    removed_dirs += 1
+            except Exception:
+                logger.debug("删除缓存目录失败: %s", path, exc_info=True)
+
+        try:
+            # 1. 项目内 TTS / 音频缓存目录
+            candidate_dirs: list[Path] = []
+
+            try:
+                cfg = getattr(self, "_config", None)
+                if cfg is not None:
+                    for attr_name in ("audio_cache_dir", "genie_temp_audio_dir"):
+                        value = getattr(cfg, attr_name, None)
+                        if value:
+                            candidate_dirs.append(Path(value))
+            except Exception:
+                logger.debug("读取配置缓存目录失败", exc_info=True)
+
+            # 保底默认目录
+            candidate_dirs.extend(
+                [
+                    Path("desktop_client/data/cache/audio"),
+                    Path("desktop_client/data/cache"),
+                ]
+            )
+
+            seen_dirs: set[str] = set()
+            for cache_dir in candidate_dirs:
+                try:
+                    resolved = str(cache_dir.resolve())
+                except Exception:
+                    resolved = str(cache_dir)
+
+                if resolved in seen_dirs:
+                    continue
+                seen_dirs.add(resolved)
+
+                if not cache_dir.exists():
+                    continue
+
+                # 删目录里的文件，但保留目录本身
+                try:
+                    for child in cache_dir.rglob("*"):
+                        if child.is_file():
+                            _safe_unlink(child)
+                    logger.info("已清理缓存目录: %s", cache_dir)
+                except Exception:
+                    logger.debug("遍历缓存目录失败: %s", cache_dir, exc_info=True)
+
+            # 2. 清理系统临时目录里的录音文件
+            temp_dir = Path(tempfile.gettempdir())
+            try:
+                for child in temp_dir.glob("asr_record_*.wav"):
+                    _safe_unlink(child)
+                for child in temp_dir.glob("tts_*.wav"):
+                    _safe_unlink(child)
+                for child in temp_dir.glob("gpt_sovits_*.wav"):
+                    _safe_unlink(child)
+            except Exception:
+                logger.debug("清理系统临时音频缓存失败", exc_info=True)
+
+            # 3. 清理项目内可能残留的分段文件
+            extra_patterns = [
+                "tts_*.wav",
+                "tts_*_part*.wav",
+                "gpt_sovits_*.wav",
+                "gpt_sovits_*_part*.wav",
+            ]
+            extra_roots = [
+                Path("desktop_client/data/cache/audio"),
+            ]
+            for root in extra_roots:
+                if not root.exists():
+                    continue
+                for pattern in extra_patterns:
+                    try:
+                        for child in root.glob(pattern):
+                            _safe_unlink(child)
+                    except Exception:
+                        logger.debug("按模式清理缓存失败: root=%s pattern=%s", root, pattern, exc_info=True)
+
+            logger.info("退出前缓存清理完成: removed_files=%s removed_dirs=%s", removed_files, removed_dirs)
+
+        except Exception:
+            logger.exception("退出前清理缓存失败")
 
 
 def main():

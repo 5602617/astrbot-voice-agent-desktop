@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
-import time
-import uuid
-from pathlib import Path
-from typing import Optional, Callable, Awaitable, Any
+from typing import Optional, Callable, Awaitable
 
 from ...bridge import InputMessage, MessageBridge
 from ...config import ClientConfig
@@ -28,13 +24,45 @@ class VoicePipelineRuntime:
         self.asr_provider = create_asr_provider(self.runtime_config.asr, logger)
         self.tts_provider = create_tts_provider(
             self.runtime_config.tts,
-            logger,
+            self.logger,
             cache_dir=self.runtime_config.pipeline.audio_cache_dir,
         )
 
         self._playing_audio_path: Optional[str] = None
         self._last_reply_started: set[str] = set()
         self._audio_generated_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+        self._tts_segment_callback = None
+        self._session_generation: dict[str, int] = {}
+        self._request_generation: dict[tuple[str, str], int] = {}
+
+    def _current_generation(self, session_id: str) -> int:
+        return self._session_generation.get(session_id, 0)
+
+    def _bump_generation(self, session_id: str) -> int:
+        new_gen = self._current_generation(session_id) + 1
+        self._session_generation[session_id] = new_gen
+        return new_gen
+
+    def _bind_request_generation(self, session_id: str, request_id: str | None) -> int:
+        if not request_id:
+            return self._current_generation(session_id)
+        key = (session_id, request_id)
+        if key not in self._request_generation:
+            self._request_generation[key] = self._current_generation(session_id)
+        return self._request_generation[key]
+
+    def _is_request_stale(self, session_id: str, request_id: str | None) -> bool:
+        if not request_id:
+            return False
+        return self._bind_request_generation(session_id, request_id) != self._current_generation(session_id)
+
+    def set_tts_segment_callback(self, callback) -> None:
+        self._tts_segment_callback = callback
+
+        tts_provider = getattr(self, "tts_provider", None)
+        if tts_provider and hasattr(tts_provider, "set_segment_callback"):
+            tts_provider.set_segment_callback(callback)
+            self.logger.info("VoicePipelineRuntime 已注册 TTS 句级回调到 provider")
 
     def set_audio_generated_callback(self, callback: Callable[[str, str], Awaitable[None]]) -> None:
         self._audio_generated_callback = callback
@@ -48,6 +76,11 @@ class VoicePipelineRuntime:
             self.logger,
             cache_dir=self.runtime_config.pipeline.audio_cache_dir,
         )
+
+        if self._tts_segment_callback and hasattr(self.tts_provider, "set_segment_callback"):
+            self.tts_provider.set_segment_callback(self._tts_segment_callback)
+            self.logger.info("VoicePipelineRuntime reload 后已重新注册 TTS 句级回调到 provider")
+
         await self.asr_provider.warmup()
         try:
             await self.tts_provider.warmup()
@@ -138,8 +171,18 @@ class VoicePipelineRuntime:
         self,
         full_text: str | None = None,
         session_ctx: object | None = None,
+        request_id: str | None = None,
     ) -> str | None:
         session_id = self._resolve_session_id(session_ctx)
+        if self._is_request_stale(session_id, request_id):
+            self.logger.info(
+                "VoicePipeline 丢弃过期 reply_end: session=%s request_id=%s",
+                session_id,
+                request_id,
+            )
+            self.turns.end_turn(session_id)
+            return None
+
         turn = self.turns.current(session_id)
         merged = (full_text or (turn.reply_buffer if turn else '')).strip()
         if not merged:
@@ -147,24 +190,49 @@ class VoicePipelineRuntime:
             return None
 
         self.turns.set_state(session_id, VoiceTurnState.SYNTHESIZING)
-        out_path = await self.tts_provider.synthesize_to_file(merged)
+        out_path = await self.tts_provider.synthesize_to_file(
+            merged,
+            request_id=request_id,
+            session_id=session_id,
+        )
         if out_path and self.runtime_config.pipeline.auto_play_tts:
             self.turns.set_state(session_id, VoiceTurnState.PLAYING)
             await self._notify_audio_generated(session_id, out_path)
         self.turns.end_turn(session_id)
+        if request_id:
+            self._request_generation.pop((session_id, request_id), None)
         return out_path
 
     def interrupt_current_turn(self, session_ctx: object | None = None, reason: str = 'manual') -> None:
         session_id = self._resolve_session_id(session_ctx)
+        new_gen = self._bump_generation(session_id)
+
         self.turns.interrupt(session_id)
+
         if self.runtime_config.pipeline.interrupt_asr_on_new_input:
             self.asr_provider.cancel()
+
         if self.runtime_config.pipeline.interrupt_tts_on_new_input:
-            self.tts_provider.stop()
-        self.logger.info(f"Voice turn interrupted: session={session_id}, reason={reason}")
+            self.stop_tts(session_ctx=session_id)
+
+        self.logger.info(
+            "Voice turn interrupted: session=%s, reason=%s, generation=%s",
+            session_id,
+            reason,
+            new_gen,
+        )
 
     def stop_tts(self, session_ctx: object | None = None) -> None:
+        session_id = self._resolve_session_id(session_ctx)
+
+        stop_session = getattr(self.tts_provider, "stop_session", None)
+        if callable(stop_session):
+            stop_session(session_id)
+            self.logger.info("VoicePipeline 定向停止TTS: session=%s", session_id)
+            return
+
         self.tts_provider.stop()
+        self.logger.info("VoicePipeline 全局停止TTS: session=%s", session_id)
 
     async def handle_llm_message_event(
         self,
@@ -176,6 +244,16 @@ class VoicePipelineRuntime:
     ) -> Optional[str]:
         request_id = (metadata or {}).get('request_id', 'default')
         key = f"{session_id}:{request_id}"
+        self._bind_request_generation(session_id, request_id)
+
+        if self._is_request_stale(session_id, request_id):
+            self.logger.info(
+                "VoicePipeline 忽略过期消息事件: session=%s request_id=%s msg_type=%s",
+                session_id,
+                request_id,
+                msg_type,
+            )
+            return None
 
         if msg_type == 'text':
             if key not in self._last_reply_started:
@@ -189,7 +267,11 @@ class VoicePipelineRuntime:
                 self.logger.info(f"忽略重复/无效 end 事件: key={key}")
                 return None
             self._last_reply_started.discard(key)
-            return await self.on_llm_reply_end(session_ctx=session_id)
+            return await self.on_llm_reply_end(
+                session_ctx=session_id,
+                request_id=request_id,
+            )
+
         return None
 
     async def _notify_audio_generated(self, session_id: str, audio_path: str) -> None:

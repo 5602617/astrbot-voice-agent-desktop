@@ -429,6 +429,18 @@ class PluginManager:
             # 调用 on_disable
             plugin.on_disable()
 
+            # 如果插件自己创建了异步 shutdown 任务，这里等待它收尾
+            shutdown_task = getattr(plugin, "_shutdown_task", None)
+            if shutdown_task is not None and not shutdown_task.done():
+                try:
+                    await asyncio.wait_for(shutdown_task, timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.warning(f"等待插件关闭超时，继续退出: {plugin_name}")
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"等待插件关闭任务失败 {plugin_name}: {e}")
+
             plugin._set_state(PluginState.DISABLED)
             self._enabled_plugins.discard(plugin_name)
 

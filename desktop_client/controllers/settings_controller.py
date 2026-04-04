@@ -210,7 +210,6 @@ class SettingsController(QObject):
             "region_screenshot",
             "full_screenshot",
             "toggle_ball",
-            "quick_ask",
             "cycle_theme",
         ]:
             if key in hotkeys:

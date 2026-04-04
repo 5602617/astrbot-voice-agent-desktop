@@ -157,7 +157,6 @@ class HotkeyConfigData:
     region_screenshot: str = "Ctrl+Shift+S"
     full_screenshot: str = "Ctrl+Shift+F"
     toggle_ball: str = "Ctrl+Shift+B"
-    quick_ask: str = "Ctrl+Shift+Q"
     cycle_theme: str = "Ctrl+Shift+T"
     toggle_asr: str = "Ctrl+T"
     global_enabled: bool = True
@@ -232,8 +231,7 @@ class VoiceConfig:
     # ==================== GPT-SoVITS 本地托管推理 ====================
     gpt_sovits_enabled: bool = False
     gpt_sovits_python_path: str = "python"
-    gpt_sovits_api_script_path: str = ""
-    gpt_sovits_working_dir: str = ""
+    gpt_sovits_root_dir: str = ""
     gpt_sovits_host: str = "127.0.0.1"
     gpt_sovits_port: int = 9880
     gpt_sovits_startup_timeout: int = 40
@@ -241,28 +239,14 @@ class VoiceConfig:
     gpt_sovits_request_timeout: int = 90
     gpt_sovits_health_endpoint: str = "/health"
     gpt_sovits_tts_endpoint: str = "/tts"
-    gpt_sovits_tts_config_path: str = ""
-    gpt_sovits_default_character: str = ""
     gpt_sovits_default_language: str = "zh"
     gpt_sovits_reference_audio_path: str = ""
     gpt_sovits_reference_text: str = ""
-    gpt_sovits_segmentation_mode: str = "auto"
-    gpt_sovits_segmentation_params_json: str = "{}"
-    gpt_sovits_gpt_weights_dir: str = ""
-    gpt_sovits_sovits_weights_dir: str = ""
+    gpt_sovits_segmentation_mode: str = "cut5"
     gpt_sovits_selected_gpt_weights: str = ""
     gpt_sovits_selected_sovits_weights: str = ""
     gpt_sovits_auto_shutdown_on_exit: bool = True
-
-    # 是否自动启动本地 ASR 适配器（需配置 local_asr_adapter）
-    auto_start_local_asr: bool = False
-    # 本地 ASR 适配器，格式: module.path:ClassName
-    local_asr_adapter: str = ""
-    # 本地 TTS 适配器，格式: module.path:ClassName
-    local_tts_adapter: str = ""
-    # TTS 文字语音同时输出（对应 AstrBot 的 provider_tts_settings.dual_output）
     dual_output: bool = False
-
 
 # 缓存配置目录路径，避免重复计算
 _cached_config_dir: Optional[Path] = None

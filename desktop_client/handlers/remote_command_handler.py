@@ -125,8 +125,27 @@ class RemoteCommandHandler(QObject):
             self.command_completed.emit(command, request_id, False, error_msg)
             return {"success": False, "error_message": error_msg}
 
+    def _build_screenshot_success_result(
+            self, image_base64: str, width: int, height: int
+    ) -> Dict[str, Any]:
+        """按原版协议包装 screenshot 成功结果"""
+        return {
+            "success": True,
+            "image_base64": image_base64,
+            "width": width,
+            "height": height,
+            "timestamp": time.time(),
+        }
+
+    def _build_screenshot_error_result(self, error_message: str) -> Dict[str, Any]:
+        """按原版协议包装 screenshot 失败结果"""
+        return {
+            "success": False,
+            "error_message": error_message,
+        }
+
     async def _handle_screenshot_command(
-        self, request_id: str, params: dict
+            self, request_id: str, params: dict
     ) -> Dict[str, Any]:
         """
         处理截图命令
@@ -172,13 +191,13 @@ class RemoteCommandHandler(QObject):
                 self._floating_ball.show()
 
             if image is None:
-                return {"success": False, "error_message": "截图失败：无法捕获屏幕"}
+                return self._build_screenshot_error_result("截图失败：无法捕获屏幕")
 
             # 将图片转换为 base64
             image_bytes = service.capture_to_bytes(image)
 
             if image_bytes is None:
-                return {"success": False, "error_message": "截图失败：无法编码图片"}
+                return self._build_screenshot_error_result("截图失败：无法编码图片")
 
             image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
@@ -186,23 +205,28 @@ class RemoteCommandHandler(QObject):
                 f"远程截图成功: size={len(image_bytes)} bytes, "
                 f"resolution={image.width}x{image.height}"
             )
+            logger.info(
+                "截图结果已按原版协议封装: success=%s has_image=%s width=%s height=%s",
+                True,
+                bool(image_base64),
+                image.width,
+                image.height,
+            )
 
-            return {
-                "success": True,
-                "image_base64": image_base64,
-                "width": image.width,
-                "height": image.height,
-                "timestamp": time.time(),
-            }
+            return self._build_screenshot_success_result(
+                image_base64=image_base64,
+                width=image.width,
+                height=image.height,
+            )
 
         except ImportError as e:
             error_msg = f"截图服务不可用: {str(e)}"
             logger.error(error_msg)
-            return {"success": False, "error_message": error_msg}
+            return self._build_screenshot_error_result(error_msg)
         except Exception as e:
             error_msg = f"截图异常: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            return {"success": False, "error_message": error_msg}
+            return self._build_screenshot_error_result(error_msg)
         finally:
             # 确保窗口恢复
             if self._floating_ball:

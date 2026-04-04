@@ -336,16 +336,22 @@ if HAS_PYSIDE6:
             self._selector.start()
 
         def _on_async_complete(
-            self,
-            x: int,
-            y: int,
-            width: int,
-            height: int,
-            callback: Callable[[Optional[str]], None],
+                self,
+                x: int,
+                y: int,
+                width: int,
+                height: int,
+                callback: Callable[[Optional[str]], None],
         ):
             """异步完成回调"""
-            path = self._capture_region(x, y, width, height)
-            callback(path)
+            from PySide6.QtCore import QTimer
+
+            def _do_capture():
+                path = self._capture_region(x, y, width, height)
+                callback(path)
+
+            # 让鼠标释放事件、窗口关闭和界面刷新先完成，再真正截图
+            QTimer.singleShot(0, _do_capture)
 
         def _capture_region(
             self, x: int, y: int, width: int, height: int

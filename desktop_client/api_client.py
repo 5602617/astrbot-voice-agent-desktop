@@ -247,6 +247,8 @@ class WebSocketClient:
                 await self._heartbeat_task
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                logger.debug(f"停止心跳任务时忽略异常: {e}")
             self._heartbeat_task = None
 
         # 取消 pong 监控任务
@@ -256,24 +258,40 @@ class WebSocketClient:
                 await self._pong_monitor_task
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                logger.debug(f"停止 pong 监控任务时忽略异常: {e}")
             self._pong_monitor_task = None
 
-        # 关闭 WebSocket 连接
-        if self.ws:
-            try:
-                await self.ws.close(1000, "Client stopping")
-            except Exception as e:
-                logger.error(f"关闭连接时出错: {e}")
-            self.ws = None
-
-        # 取消重连任务
+        # 取消重连任务（尽量提前，避免 stop 过程中又触发新的 connect）
         if self._reconnect_task:
             self._reconnect_task.cancel()
             try:
                 await self._reconnect_task
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                logger.debug(f"停止重连任务时忽略异常: {e}")
             self._reconnect_task = None
+
+        # 关闭 WebSocket 连接
+        if self.ws:
+            try:
+                await self.ws.close(1000, "Client stopping")
+                # 给底层一点时间完成 close frame / socket 收尾，减少 WinError 995 噪声
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                pass
+            except ConnectionResetError as e:
+                logger.debug(f"关闭 WebSocket 时连接已重置，忽略: {e}")
+            except OSError as e:
+                if getattr(e, "winerror", None) == 995:
+                    logger.debug("关闭 WebSocket 时出现 WinError 995，忽略")
+                else:
+                    logger.debug(f"关闭 WebSocket 时出现 OSError，忽略: {e}")
+            except Exception as e:
+                logger.debug(f"关闭连接时忽略异常: {e}")
+            finally:
+                self.ws = None
 
     async def _connect_loop(self):
         """连接维护循环（自动重连，指数退避 + 抖动）"""
@@ -1020,17 +1038,37 @@ class AstrBotApiClient:
         # 停止健康检测
         await self.stop_health_check()
 
+        # 先停 WebSocket，避免后面 client/socket 还在被心跳或重连使用
+        if self.ws_client:
+            try:
+                await self.ws_client.stop()
+            except Exception as e:
+                logger.debug(f"关闭 WebSocket 客户端时忽略异常: {e}")
+            finally:
+                self.ws_client = None
+
+        # 再关 HTTP client
         if self._client and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
+            try:
+                await self._client.aclose()
+            except Exception as e:
+                logger.debug(f"关闭 HTTP client 时忽略异常: {e}")
+            finally:
+                self._client = None
 
         if self._sse_client and not self._sse_client.is_closed:
-            await self._sse_client.aclose()
-            self._sse_client = None
+            try:
+                await self._sse_client.aclose()
+            except Exception as e:
+                logger.debug(f"关闭 SSE client 时忽略异常: {e}")
+            finally:
+                self._sse_client = None
 
-        if self.ws_client:
-            await self.ws_client.stop()
-            self.ws_client = None
+        # 给事件循环一个 tick，让被取消/关闭的 IO 有机会真正落地
+        try:
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
 
         self.state = ConnectionState.DISCONNECTED
 
@@ -1688,8 +1726,10 @@ class AstrBotApiClient:
                             # 让出控制权 - 关键！
                             await asyncio.sleep(0)
 
-                            if event.event_type == "end":
-                                logger.info(f"[SSE] 收到 end 事件，结束流: task={task_name}")
+                            if event.event_type in ("complete", "end", "break"):
+                                logger.info(
+                                    f"[SSE] 收到终止事件 {event.event_type}，结束流: task={task_name}"
+                                )
                                 return
                         except json.JSONDecodeError:
                             logger.warning(f"[SSE] JSON 解析失败: {data_str[:100]}")

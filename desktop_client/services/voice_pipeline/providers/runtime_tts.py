@@ -23,6 +23,15 @@ class RuntimeTTSProvider(BaseTTSProvider):
         self._pyttsx3 = None
         self._genie_provider: BaseTTSProvider | None = None
         self._gpt_sovits_provider: BaseTTSProvider | None = None
+        self._segment_callback = None
+
+    def set_segment_callback(self, callback) -> None:
+        self._segment_callback = callback
+        self.logger.info("RuntimeTTSProvider 已设置句级回调: backend=%s callback=%r", self._backend, callback)
+
+        if self._gpt_sovits_provider is not None and hasattr(self._gpt_sovits_provider, "set_segment_callback"):
+            self._gpt_sovits_provider.set_segment_callback(callback)
+            self.logger.info("RuntimeTTSProvider 已透传句级回调到 GPT-SoVITS provider")
 
     async def warmup(self) -> None:
         if self._backend == 'qt':
@@ -46,6 +55,9 @@ class RuntimeTTSProvider(BaseTTSProvider):
             await self._genie_provider.warmup()
         elif self._backend == 'gpt_sovits':
             self._gpt_sovits_provider = GPTSoVITSRuntimeProvider(self.config, self.logger, str(self.cache_dir))
+            if self._segment_callback and hasattr(self._gpt_sovits_provider, "set_segment_callback"):
+                self._gpt_sovits_provider.set_segment_callback(self._segment_callback)
+                self.logger.info("RuntimeTTSProvider 在 warmup 后恢复句级回调到 GPT-SoVITS provider")
             await self._gpt_sovits_provider.warmup()
         elif self._backend in ('custom',):
             self.logger.warning(f"Runtime TTS backend '{self._backend}' 当前为扩展骨架")
@@ -62,15 +74,16 @@ class RuntimeTTSProvider(BaseTTSProvider):
             self._gpt_sovits_provider = None
 
     async def synthesize_to_file(
-        self,
-        text: str,
-        output_path: Optional[str] = None,
-        **kwargs,
+            self,
+            text: str,
+            output_path: Optional[str] = None,
+            **kwargs,
     ) -> Optional[str]:
         if not text.strip():
             return None
 
-        out = Path(output_path) if output_path else self.cache_dir / f"tts_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.wav"
+        out = Path(
+            output_path) if output_path else self.cache_dir / f"tts_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.wav"
         out.parent.mkdir(parents=True, exist_ok=True)
 
         if self._backend == 'edge_tts':
@@ -94,14 +107,22 @@ class RuntimeTTSProvider(BaseTTSProvider):
             if self.config.auto_play:
                 await self._genie_provider.speak(text)
                 return None
-            return await self._genie_provider.synthesize_to_file(text, str(out))
+            return await self._genie_provider.synthesize_to_file(
+                text,
+                str(out),
+                **kwargs,
+            )
 
         if self._backend == 'gpt_sovits':
             if self._gpt_sovits_provider is None:
                 await self.warmup()
             if self._gpt_sovits_provider is None:
                 return None
-            return await self._gpt_sovits_provider.synthesize_to_file(text, str(out))
+            return await self._gpt_sovits_provider.synthesize_to_file(
+                text,
+                str(out),
+                **kwargs,
+            )
 
         return None
 
@@ -157,12 +178,42 @@ class RuntimeTTSProvider(BaseTTSProvider):
                 self._qt_speaker.stop()
             except Exception:
                 pass
+
         if self._pyttsx3 is not None:
             try:
                 self._pyttsx3.stop()
             except Exception:
                 pass
+
         if self._genie_provider is not None:
             self._genie_provider.stop()
+
         if self._gpt_sovits_provider is not None:
             self._gpt_sovits_provider.stop()
+
+    def stop_session(self, session_id: str | None = None) -> None:
+        if self._qt_speaker is not None:
+            try:
+                self._qt_speaker.stop()
+            except Exception:
+                pass
+
+        if self._pyttsx3 is not None:
+            try:
+                self._pyttsx3.stop()
+            except Exception:
+                pass
+
+        if self._genie_provider is not None:
+            stop_session = getattr(self._genie_provider, "stop_session", None)
+            if callable(stop_session):
+                stop_session(session_id)
+            else:
+                self._genie_provider.stop()
+
+        if self._gpt_sovits_provider is not None:
+            stop_session = getattr(self._gpt_sovits_provider, "stop_session", None)
+            if callable(stop_session):
+                stop_session(session_id)
+            else:
+                self._gpt_sovits_provider.stop()

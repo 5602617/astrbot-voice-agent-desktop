@@ -242,12 +242,15 @@ class MediaHandler(QObject):
                 self._floating_ball.set_unread_message(True)
             self.download_failed.emit(filename, error_msg)
 
-    def play_audio(self, audio_path: str) -> None:
+    def play_audio(self, audio_path: str) -> bool:
         """
         播放音频文件
 
         Args:
             audio_path: 音频文件路径
+
+        Returns:
+            是否成功提交给播放器
         """
         try:
             from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -261,9 +264,26 @@ class MediaHandler(QObject):
             self._audio_player.setSource(QUrl.fromLocalFile(audio_path))
             self._audio_output.setVolume(1.0)  # type: ignore
             self._audio_player.play()
+
+            logger.info("MediaHandler 已提交音频到播放器: %s", audio_path)
+            return True
+
         except ImportError:
             logger.warning("QMediaPlayer 不可用，无法播放语音")
-            logger.warning("QMediaPlayer 不可用，无法播放语音")
+            return False
         except Exception as e:
             logger.error(f"播放语音失败: {e}")
-            logger.error(f"播放语音失败: {e}")
+            return False
+
+    def is_audio_active(self) -> bool:
+        """当前是否仍有音频在播放。"""
+        try:
+            if not self._audio_player:
+                return False
+
+            from PySide6.QtMultimedia import QMediaPlayer
+            state = self._audio_player.playbackState()
+            return state == QMediaPlayer.PlaybackState.PlayingState
+        except Exception as e:
+            logger.debug("读取音频播放状态失败: %s", e)
+            return False

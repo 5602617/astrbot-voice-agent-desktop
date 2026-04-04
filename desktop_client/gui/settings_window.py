@@ -197,6 +197,8 @@ class SettingsWindow(QWidget):
 
     settings_changed = Signal(dict)
     closed = Signal()
+    manual_start_gpt_sovits_requested = Signal()
+    manual_stop_gpt_sovits_requested = Signal()
 
     def __init__(self, config: Optional[ClientConfig] = None, parent=None):
         super().__init__(parent)
@@ -615,7 +617,6 @@ class SettingsWindow(QWidget):
             ("region_screenshot", "区域截图", "Ctrl+Shift+S"),
             ("full_screenshot", "全屏截图", "Ctrl+Shift+F"),
             ("toggle_ball", "显示/隐藏悬浮球", "Ctrl+Shift+B"),
-            ("quick_ask", "快速提问", "Ctrl+Shift+Q"),
             ("cycle_theme", "切换主题", "Ctrl+Shift+T"),
             ("toggle_asr", "录音快捷键（按下开始，松开结束）", "Ctrl+T"),
         ]
@@ -734,18 +735,14 @@ class SettingsWindow(QWidget):
         self._gpt_sovits_python_path.setToolTip("填写可执行 Python 路径，例如 python 或 C:/Python311/python.exe")
         row = voice_section.add_row("GPT-SoVITS Python", self._gpt_sovits_python_path)
         self._gpt_rows.append(row)
-        self._gpt_advanced_rows.append(row)
-        self._gpt_sovits_api_script_path = QLineEdit()
-        self._gpt_sovits_api_script_path.setPlaceholderText(r"D:/GPT-SoVITS/api_v2.py")
-        self._gpt_sovits_api_script_path.setToolTip("填写 GPT-SoVITS 推理端 api_v2.py 的完整路径")
-        row = voice_section.add_row("GPT-SoVITS API脚本", self._gpt_sovits_api_script_path)
+        self._gpt_client_rows.append(row)
+        self._gpt_sovits_root_dir = QLineEdit()
+        self._gpt_sovits_root_dir.setPlaceholderText(r"D:/GPT-SoVITS")
+        self._gpt_sovits_root_dir.setToolTip("填写 GPT-SoVITS 仓库根目录，程序将自动使用其中的 api_v2.py 和默认配置")
+        self._gpt_sovits_root_dir.editingFinished.connect(self._refresh_gpt_weights_from_dirs)
+        row = voice_section.add_row("GPT-SoVITS 根目录", self._gpt_sovits_root_dir)
         self._gpt_rows.append(row)
-        self._gpt_advanced_rows.append(row)
-        self._gpt_sovits_working_dir = QLineEdit()
-        self._gpt_sovits_working_dir.setPlaceholderText(r"D:/GPT-SoVITS")
-        row = voice_section.add_row("GPT-SoVITS 工作目录", self._gpt_sovits_working_dir)
-        self._gpt_rows.append(row)
-        self._gpt_advanced_rows.append(row)
+        self._gpt_client_rows.append(row)
         self._gpt_sovits_port = QSpinBox()
         self._gpt_sovits_port.setRange(1024, 65535)
         self._gpt_sovits_port.setValue(9880)
@@ -778,11 +775,7 @@ class SettingsWindow(QWidget):
         row = voice_section.add_row("请求超时(秒)", self._gpt_sovits_request_timeout)
         self._gpt_rows.append(row)
         self._gpt_advanced_rows.append(row)
-        self._gpt_sovits_tts_config_path = QLineEdit()
-        self._gpt_sovits_tts_config_path.setPlaceholderText(r"D:/GPT-SoVITS/GPT_SoVITS/configs/tts_infer.yaml")
-        row = voice_section.add_row("tts_infer.yaml 路径", self._gpt_sovits_tts_config_path)
-        self._gpt_rows.append(row)
-        self._gpt_advanced_rows.append(row)
+
         self._gpt_sovits_default_language = QLineEdit()
         self._gpt_sovits_default_language.setPlaceholderText("zh")
         row = voice_section.add_row("默认语言", self._gpt_sovits_default_language)
@@ -799,25 +792,42 @@ class SettingsWindow(QWidget):
         self._gpt_rows.append(row)
         self._gpt_client_rows.append(row)
         self._gpt_sovits_segmentation_mode = QLineEdit()
-        self._gpt_sovits_segmentation_mode.setPlaceholderText("auto")
+        self._gpt_sovits_segmentation_mode.setPlaceholderText("cut5")
         row = voice_section.add_row("切句模式", self._gpt_sovits_segmentation_mode)
         self._gpt_rows.append(row)
         self._gpt_advanced_rows.append(row)
-        self._gpt_sovits_segmentation_params_json = QTextEdit()
-        self._gpt_sovits_segmentation_params_json.setPlaceholderText('{\"max_len\": 120}')
-        self._gpt_sovits_segmentation_params_json.setFixedHeight(72)
-        row = voice_section.add_row("切句参数(JSON)", self._gpt_sovits_segmentation_params_json, orientation="vertical")
-        self._gpt_rows.append(row)
-        self._gpt_advanced_rows.append(row)
+
         self._gpt_sovits_auto_shutdown_on_exit = QCheckBox("自动关闭子进程")
         self._gpt_rows.append(self._gpt_sovits_auto_shutdown_on_exit)
         self._gpt_advanced_rows.append(self._gpt_sovits_auto_shutdown_on_exit)
         voice_section.add_widget(self._gpt_sovits_auto_shutdown_on_exit)
-        self._generate_gpt_script_btn = QPushButton("生成 GPT-SoVITS 初始化脚本")
-        self._generate_gpt_script_btn.clicked.connect(self._on_generate_gpt_sovits_script)
-        self._gpt_rows.append(self._generate_gpt_script_btn)
-        self._gpt_advanced_rows.append(self._generate_gpt_script_btn)
-        voice_section.add_widget(self._generate_gpt_script_btn)
+
+        self._gpt_sovits_runtime_status = QLabel("GPT-SoVITS 状态：未运行")
+        self._gpt_sovits_runtime_status.setObjectName("infoLabel")
+        self._gpt_rows.append(self._gpt_sovits_runtime_status)
+        voice_section.add_widget(self._gpt_sovits_runtime_status)
+
+        runtime_btn_row = QFrame()
+        runtime_btn_layout = QHBoxLayout(runtime_btn_row)
+        runtime_btn_layout.setContentsMargins(0, 0, 0, 0)
+        runtime_btn_layout.setSpacing(8)
+
+        self._gpt_sovits_start_btn = QPushButton("启动 GPT-SoVITS")
+        self._gpt_sovits_stop_btn = QPushButton("关闭 GPT-SoVITS")
+
+        self._gpt_sovits_start_btn.clicked.connect(
+            self.manual_start_gpt_sovits_requested.emit
+        )
+        self._gpt_sovits_stop_btn.clicked.connect(
+            self.manual_stop_gpt_sovits_requested.emit
+        )
+
+        runtime_btn_layout.addWidget(self._gpt_sovits_start_btn)
+        runtime_btn_layout.addWidget(self._gpt_sovits_stop_btn)
+
+        self._gpt_rows.append(runtime_btn_row)
+        voice_section.add_widget(runtime_btn_row)
+
         self._emit_asr_text_message = QCheckBox("ASR 文本显示到对话框")
         voice_section.add_widget(self._emit_asr_text_message)
 
@@ -984,10 +994,42 @@ class SettingsWindow(QWidget):
     def _refresh_gpt_weights_from_dirs(self):
         from pathlib import Path
 
-        gpt_dir = Path(getattr(self.config.voice, "gpt_sovits_gpt_weights_dir", "") or "")
-        sovits_dir = Path(getattr(self.config.voice, "gpt_sovits_sovits_weights_dir", "") or "")
-        gpt_files = sorted([str(p) for p in gpt_dir.glob("*.ckpt")]) if gpt_dir.exists() else []
-        sovits_files = sorted([str(p) for p in sovits_dir.glob("*.pth")]) if sovits_dir.exists() else []
+        root_dir_text = self._gpt_sovits_root_dir.text().strip()
+        root = Path(root_dir_text).expanduser() if root_dir_text else None
+
+        gpt_files = []
+        sovits_files = []
+
+        if root and root.exists():
+            # 先按这份 SoVITS 代码默认扫描顺序来
+            gpt_candidates = [
+                root / "GPT_weights_v2",
+                root / "GPT_weights",
+                root / "GPT_weights_v2ProPlus",
+            ]
+            sovits_candidates = [
+                root / "SoVITS_weights_v2",
+                root / "SoVITS_weights",
+                root / "SoVITS_weights_v2ProPlus",
+            ]
+
+            # 这里不选“第一个存在目录”，而是选“第一个有目标文件的目录”
+            gpt_dir = next(
+                (p for p in gpt_candidates if p.exists() and p.is_dir() and any(p.glob("*.ckpt"))),
+                None,
+            )
+            sovits_dir = next(
+                (p for p in sovits_candidates if p.exists() and p.is_dir() and any(p.glob("*.pth"))),
+                None,
+            )
+
+            if gpt_dir:
+                gpt_files = sorted(str(p) for p in gpt_dir.glob("*.ckpt"))
+            if sovits_dir:
+                sovits_files = sorted(str(p) for p in sovits_dir.glob("*.pth"))
+
+        current_gpt = self._gpt_selected_gpt_weights.currentData() or ""
+        current_sovits = self._gpt_selected_sovits_weights.currentData() or ""
 
         self._gpt_selected_gpt_weights.clear()
         self._gpt_selected_gpt_weights.addItem("(自动/不切换)", "")
@@ -999,6 +1041,13 @@ class SettingsWindow(QWidget):
         for p in sovits_files:
             self._gpt_selected_sovits_weights.addItem(Path(p).name, p)
 
+        gpt_index = self._gpt_selected_gpt_weights.findData(current_gpt)
+        if gpt_index >= 0:
+            self._gpt_selected_gpt_weights.setCurrentIndex(gpt_index)
+
+        sovits_index = self._gpt_selected_sovits_weights.findData(current_sovits)
+        if sovits_index >= 0:
+            self._gpt_selected_sovits_weights.setCurrentIndex(sovits_index)
     def _create_custom_colors_tab(self) -> QWidget:
         """创建自定义颜色设置标签页"""
         tab = QWidget()
@@ -2247,19 +2296,16 @@ class SettingsWindow(QWidget):
             self._tts_auto_play.setChecked(getattr(self.config.voice, "auto_play_tts", True))
             self._genie_data_dir.setText(getattr(self.config.voice, "genie_data_dir", ""))
             self._gpt_sovits_python_path.setText(getattr(self.config.voice, "gpt_sovits_python_path", "python"))
-            self._gpt_sovits_api_script_path.setText(getattr(self.config.voice, "gpt_sovits_api_script_path", ""))
-            self._gpt_sovits_working_dir.setText(getattr(self.config.voice, "gpt_sovits_working_dir", ""))
             self._gpt_sovits_port.setValue(int(getattr(self.config.voice, "gpt_sovits_port", 9880) or 9880))
             self._gpt_sovits_startup_timeout.setValue(int(getattr(self.config.voice, "gpt_sovits_startup_timeout", 40) or 40))
             self._gpt_sovits_health_timeout.setValue(int(getattr(self.config.voice, "gpt_sovits_health_timeout", 2) or 2))
             self._gpt_sovits_request_timeout.setValue(int(getattr(self.config.voice, "gpt_sovits_request_timeout", 90) or 90))
-            self._gpt_sovits_tts_config_path.setText(getattr(self.config.voice, "gpt_sovits_tts_config_path", ""))
             self._gpt_sovits_default_language.setText(getattr(self.config.voice, "gpt_sovits_default_language", "zh"))
             self._gpt_sovits_reference_audio_path.setText(getattr(self.config.voice, "gpt_sovits_reference_audio_path", ""))
             self._gpt_sovits_reference_text.setText(getattr(self.config.voice, "gpt_sovits_reference_text", ""))
-            self._gpt_sovits_segmentation_mode.setText(getattr(self.config.voice, "gpt_sovits_segmentation_mode", "auto"))
-            self._gpt_sovits_segmentation_params_json.setPlainText(getattr(self.config.voice, "gpt_sovits_segmentation_params_json", "{}"))
+            self._gpt_sovits_segmentation_mode.setText(getattr(self.config.voice, "gpt_sovits_segmentation_mode", "cut5"))
             self._gpt_sovits_auto_shutdown_on_exit.setChecked(getattr(self.config.voice, "gpt_sovits_auto_shutdown_on_exit", True))
+            self._gpt_sovits_root_dir.setText(getattr(self.config.voice, "gpt_sovits_root_dir", "") or "")
             self._refresh_gpt_weights_from_dirs()
             gpt_selected = getattr(self.config.voice, "gpt_sovits_selected_gpt_weights", "")
             sovits_selected = getattr(self.config.voice, "gpt_sovits_selected_sovits_weights", "")
@@ -2619,26 +2665,6 @@ class SettingsWindow(QWidget):
         """重置设置"""
         self._load_settings()
 
-    def _on_generate_gpt_sovits_script(self):
-        """生成 GPT-SoVITS 本地托管启动脚本。"""
-        from pathlib import Path
-
-        out_dir = Path(ClientConfig.get_config_dir()) / "scripts" / "gpt_sovits"
-        cfg = {
-            "python_path": self._gpt_sovits_python_path.text().strip() or "python",
-            "api_script_path": self._gpt_sovits_api_script_path.text().strip(),
-            "working_dir": self._gpt_sovits_working_dir.text().strip(),
-            "tts_config_path": self._gpt_sovits_tts_config_path.text().strip(),
-            "port": self._gpt_sovits_port.value(),
-        }
-        path = generate_gpt_sovits_bat(out_dir, cfg)
-        QMessageBox.information(
-            self,
-            "脚本已生成",
-            f"已生成 GPT-SoVITS 初始化脚本：\n{path}\n\n"
-            "该脚本仅用于本地推理端（127.0.0.1），不包含训练相关功能。",
-        )
-
     def _on_save(self):
         """保存设置"""
         settings = {
@@ -2696,20 +2722,17 @@ class SettingsWindow(QWidget):
                 "genie_data_dir": self._genie_data_dir.text().strip(),
                 "genie_use_data_dir": bool(self._genie_data_dir.text().strip()),
                 "gpt_sovits_python_path": self._gpt_sovits_python_path.text().strip() or "python",
-                "gpt_sovits_api_script_path": self._gpt_sovits_api_script_path.text().strip(),
-                "gpt_sovits_working_dir": self._gpt_sovits_working_dir.text().strip(),
+                "gpt_sovits_root_dir": self._gpt_sovits_root_dir.text().strip(),
                 "gpt_sovits_port": self._gpt_sovits_port.value(),
                 "gpt_sovits_startup_timeout": self._gpt_sovits_startup_timeout.value(),
                 "gpt_sovits_health_timeout": self._gpt_sovits_health_timeout.value(),
                 "gpt_sovits_request_timeout": self._gpt_sovits_request_timeout.value(),
-                "gpt_sovits_tts_config_path": self._gpt_sovits_tts_config_path.text().strip(),
                 "gpt_sovits_default_language": self._gpt_sovits_default_language.text().strip() or "zh",
                 "gpt_sovits_reference_audio_path": self._gpt_sovits_reference_audio_path.text().strip(),
                 "gpt_sovits_reference_text": self._gpt_sovits_reference_text.text().strip(),
                 "gpt_sovits_selected_gpt_weights": self._gpt_selected_gpt_weights.currentData() or "",
                 "gpt_sovits_selected_sovits_weights": self._gpt_selected_sovits_weights.currentData() or "",
-                "gpt_sovits_segmentation_mode": self._gpt_sovits_segmentation_mode.text().strip() or "auto",
-                "gpt_sovits_segmentation_params_json": self._gpt_sovits_segmentation_params_json.toPlainText().strip() or "{}",
+                "gpt_sovits_segmentation_mode": self._gpt_sovits_segmentation_mode.text().strip() or "cut5",
                 "gpt_sovits_auto_shutdown_on_exit": self._gpt_sovits_auto_shutdown_on_exit.isChecked(),
                 "gpt_sovits_enabled": self._tts_backend.currentData() == "gpt_sovits",
                 "emit_asr_text_message": self._emit_asr_text_message.isChecked(),
@@ -2835,20 +2858,17 @@ class SettingsWindow(QWidget):
             self.config.voice.genie_data_dir = settings["voice"]["genie_data_dir"]
             self.config.voice.genie_use_data_dir = settings["voice"]["genie_use_data_dir"]
             self.config.voice.gpt_sovits_python_path = settings["voice"]["gpt_sovits_python_path"]
-            self.config.voice.gpt_sovits_api_script_path = settings["voice"]["gpt_sovits_api_script_path"]
-            self.config.voice.gpt_sovits_working_dir = settings["voice"]["gpt_sovits_working_dir"]
+            self.config.voice.gpt_sovits_root_dir = settings["voice"]["gpt_sovits_root_dir"]
             self.config.voice.gpt_sovits_port = settings["voice"]["gpt_sovits_port"]
             self.config.voice.gpt_sovits_startup_timeout = settings["voice"]["gpt_sovits_startup_timeout"]
             self.config.voice.gpt_sovits_health_timeout = settings["voice"]["gpt_sovits_health_timeout"]
             self.config.voice.gpt_sovits_request_timeout = settings["voice"]["gpt_sovits_request_timeout"]
-            self.config.voice.gpt_sovits_tts_config_path = settings["voice"]["gpt_sovits_tts_config_path"]
             self.config.voice.gpt_sovits_default_language = settings["voice"]["gpt_sovits_default_language"]
             self.config.voice.gpt_sovits_reference_audio_path = settings["voice"]["gpt_sovits_reference_audio_path"]
             self.config.voice.gpt_sovits_reference_text = settings["voice"]["gpt_sovits_reference_text"]
             self.config.voice.gpt_sovits_selected_gpt_weights = settings["voice"]["gpt_sovits_selected_gpt_weights"]
             self.config.voice.gpt_sovits_selected_sovits_weights = settings["voice"]["gpt_sovits_selected_sovits_weights"]
             self.config.voice.gpt_sovits_segmentation_mode = settings["voice"]["gpt_sovits_segmentation_mode"]
-            self.config.voice.gpt_sovits_segmentation_params_json = settings["voice"]["gpt_sovits_segmentation_params_json"]
             self.config.voice.gpt_sovits_auto_shutdown_on_exit = settings["voice"]["gpt_sovits_auto_shutdown_on_exit"]
             self.config.voice.gpt_sovits_enabled = settings["voice"]["gpt_sovits_enabled"]
             self.config.voice.emit_asr_text_message = settings["voice"]["emit_asr_text_message"]
@@ -2968,6 +2988,36 @@ class SettingsWindow(QWidget):
 
         self.settings_changed.emit(settings)
         self.close()
+    def update_gpt_sovits_runtime_status(self, text: str) -> None:
+        """更新 GPT-SoVITS 运行状态显示"""
+        if hasattr(self, "_gpt_sovits_runtime_status") and self._gpt_sovits_runtime_status:
+            self._gpt_sovits_runtime_status.setText(text)
+
+    def update_gpt_sovits_runtime_status_from_dict(self, status: dict) -> None:
+        running = bool(status.get("running", False))
+        process_alive = bool(status.get("process_alive", False))
+        pid = status.get("pid")
+        detail = status.get("detail", "")
+        health_path = status.get("health_path") or ""
+
+        if running:
+            text = "GPT-SoVITS 状态：运行中"
+            if pid:
+                text += f" (PID: {pid})"
+            if health_path:
+                text += f" | 检测端点: {health_path}"
+        elif process_alive:
+            text = "GPT-SoVITS 状态：进程存在但服务未就绪"
+            if pid:
+                text += f" (PID: {pid})"
+            if detail:
+                text += f" | {detail}"
+        else:
+            text = "GPT-SoVITS 状态：未运行"
+            if detail:
+                text += f" | {detail}"
+
+        self.update_gpt_sovits_runtime_status(text)
 
     def closeEvent(self, event):
         """关闭事件"""
