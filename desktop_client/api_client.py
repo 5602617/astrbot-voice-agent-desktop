@@ -183,10 +183,6 @@ class WebSocketClient:
         self._reconnect_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._pong_monitor_task: Optional[asyncio.Task] = None
-        self._send_task: Optional[asyncio.Task] = None
-        self._high_priority_send_queue: asyncio.Queue[str] = asyncio.Queue()
-        self._normal_send_queue: asyncio.Queue[str] = asyncio.Queue()
-        self._send_lock = asyncio.Lock()
 
         # 心跳状态跟踪
         self._last_heartbeat_ack: float = 0  # 上次收到心跳响应的时间
@@ -244,15 +240,6 @@ class WebSocketClient:
         self._running = False
         self._set_connection_state("disconnected")
 
-        # 先停止发送任务，避免在关闭连接后继续发送
-        if self._send_task:
-            self._send_task.cancel()
-            try:
-                await self._send_task
-            except asyncio.CancelledError:
-                pass
-            self._send_task = None
-
         # 先取消心跳任务
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
@@ -260,6 +247,8 @@ class WebSocketClient:
                 await self._heartbeat_task
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                logger.debug(f"停止心跳任务时忽略异常: {e}")
             self._heartbeat_task = None
 
         # 取消 pong 监控任务
@@ -269,24 +258,40 @@ class WebSocketClient:
                 await self._pong_monitor_task
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                logger.debug(f"停止 pong 监控任务时忽略异常: {e}")
             self._pong_monitor_task = None
 
-        # 关闭 WebSocket 连接
-        if self.ws:
-            try:
-                await self.ws.close(1000, "Client stopping")
-            except Exception as e:
-                logger.error(f"关闭连接时出错: {e}")
-            self.ws = None
-
-        # 取消重连任务
+        # 取消重连任务（尽量提前，避免 stop 过程中又触发新的 connect）
         if self._reconnect_task:
             self._reconnect_task.cancel()
             try:
                 await self._reconnect_task
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                logger.debug(f"停止重连任务时忽略异常: {e}")
             self._reconnect_task = None
+
+        # 关闭 WebSocket 连接
+        if self.ws:
+            try:
+                await self.ws.close(1000, "Client stopping")
+                # 给底层一点时间完成 close frame / socket 收尾，减少 WinError 995 噪声
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                pass
+            except ConnectionResetError as e:
+                logger.debug(f"关闭 WebSocket 时连接已重置，忽略: {e}")
+            except OSError as e:
+                if getattr(e, "winerror", None) == 995:
+                    logger.debug("关闭 WebSocket 时出现 WinError 995，忽略")
+                else:
+                    logger.debug(f"关闭 WebSocket 时出现 OSError，忽略: {e}")
+            except Exception as e:
+                logger.debug(f"关闭连接时忽略异常: {e}")
+            finally:
+                self.ws = None
 
     async def _connect_loop(self):
         """连接维护循环（自动重连，指数退避 + 抖动）"""
@@ -362,10 +367,6 @@ class WebSocketClient:
                     # 启动底层 pong 监控
                     self._pong_monitor_task = asyncio.create_task(self._monitor_pong())
 
-                    # 启动统一发送循环（串行发送，避免并发 send 冲突）
-                    self._reset_send_queues()
-                    self._send_task = asyncio.create_task(self._send_loop())
-
                     # 消息接收循环
                     async for message in ws:
                         if not self._running:
@@ -426,8 +427,7 @@ class WebSocketClient:
                                     "response_time": time.time(),
                                     "session_id": self.session_id,
                                 }
-                                await self.send(pong_msg, high_priority=True)
-                                logger.debug("收到 server_ping，已优先排队 server_pong")
+                                await self.ws.send(json.dumps(pong_msg))
                                 # 更新活跃时间
                                 self._last_message_time = time.time()
                                 continue
@@ -443,8 +443,7 @@ class WebSocketClient:
 
                             # 处理服务端下发的命令
                             if data.get("type") == "command":
-                                # 命令处理放到后台任务，避免阻塞接收循环和心跳处理
-                                asyncio.create_task(self._handle_command(data))
+                                await self._handle_command(data)
                                 continue
 
                             if self.on_message:
@@ -551,15 +550,6 @@ class WebSocketClient:
                         pass
                     self._pong_monitor_task = None
 
-                # 取消发送任务
-                if self._send_task:
-                    self._send_task.cancel()
-                    try:
-                        await self._send_task
-                    except asyncio.CancelledError:
-                        pass
-                    self._send_task = None
-
             # 指数退避重连（带抖动）
             if self._running:
                 self._set_connection_state("reconnecting")
@@ -597,7 +587,7 @@ class WebSocketClient:
                     },
                 }
                 self._last_heartbeat_sent = current_time
-                await self.send(heartbeat_msg, high_priority=True)
+                await self.ws.send(json.dumps(heartbeat_msg))
                 consecutive_send_failures = 0  # 发送成功，重置计数
 
                 # 等待心跳间隔
@@ -676,37 +666,10 @@ class WebSocketClient:
                     "type": "get_config",
                     "timestamp": time.time(),
                 }
-                await self.send(config_request, high_priority=True)
+                await self.ws.send(json.dumps(config_request))
                 logger.debug("已请求服务端配置")
         except Exception as e:
             logger.debug(f"请求服务端配置失败: {e}")
-
-    async def _send_loop(self):
-        """统一发送循环：高优先级（心跳/控制）优先，串行发送避免并发冲突。"""
-        while self._running and self.ws:
-            try:
-                # 优先发送高优先级消息（server_pong / heartbeat 等）
-                try:
-                    payload = self._high_priority_send_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    payload = await self._normal_send_queue.get()
-
-                async with self._send_lock:
-                    if not self.ws:
-                        continue
-                    await self.ws.send(payload)
-            except asyncio.CancelledError:
-                break
-            except websockets.ConnectionClosed:
-                break
-            except Exception as e:
-                logger.warning(f"发送循环异常: {e}")
-                await asyncio.sleep(0.05)
-
-    def _reset_send_queues(self):
-        """重置发送队列，避免重连后残留旧连接消息。"""
-        self._high_priority_send_queue = asyncio.Queue()
-        self._normal_send_queue = asyncio.Queue()
 
     async def _force_reconnect(self, reason: str):
         """强制重连"""
@@ -786,29 +749,15 @@ class WebSocketClient:
             "command": command,
             "data": {"request_id": request_id, **result},
         }
-        image_base64 = result.get("image_base64")
-        if isinstance(image_base64, str):
-            logger.debug(
-                f"命令结果包含截图数据: request_id={request_id}, base64_len={len(image_base64)}"
-            )
         await self.send(message)
         logger.debug(f"已发送命令结果: {command}, request_id={request_id}")
 
-    async def send(self, data: dict, high_priority: bool = False):
+    async def send(self, data: dict):
         """发送消息"""
-        if not self.ws:
+        if self.ws:
+            await self.ws.send(json.dumps(data))
+        else:
             logger.debug("⚠️ 未连接，无法发送消息")
-            return
-
-        # 大消息序列化放到线程池，避免阻塞事件循环导致心跳延迟
-        payload = await asyncio.to_thread(json.dumps, data, ensure_ascii=False)
-
-        queue = (
-            self._high_priority_send_queue
-            if high_priority
-            else self._normal_send_queue
-        )
-        await queue.put(payload)
 
     async def send_desktop_state(self, state_data: dict):
         """
@@ -1089,17 +1038,37 @@ class AstrBotApiClient:
         # 停止健康检测
         await self.stop_health_check()
 
+        # 先停 WebSocket，避免后面 client/socket 还在被心跳或重连使用
+        if self.ws_client:
+            try:
+                await self.ws_client.stop()
+            except Exception as e:
+                logger.debug(f"关闭 WebSocket 客户端时忽略异常: {e}")
+            finally:
+                self.ws_client = None
+
+        # 再关 HTTP client
         if self._client and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
+            try:
+                await self._client.aclose()
+            except Exception as e:
+                logger.debug(f"关闭 HTTP client 时忽略异常: {e}")
+            finally:
+                self._client = None
 
         if self._sse_client and not self._sse_client.is_closed:
-            await self._sse_client.aclose()
-            self._sse_client = None
+            try:
+                await self._sse_client.aclose()
+            except Exception as e:
+                logger.debug(f"关闭 SSE client 时忽略异常: {e}")
+            finally:
+                self._sse_client = None
 
-        if self.ws_client:
-            await self.ws_client.stop()
-            self.ws_client = None
+        # 给事件循环一个 tick，让被取消/关闭的 IO 有机会真正落地
+        try:
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
 
         self.state = ConnectionState.DISCONNECTED
 
@@ -1757,8 +1726,10 @@ class AstrBotApiClient:
                             # 让出控制权 - 关键！
                             await asyncio.sleep(0)
 
-                            if event.event_type == "end":
-                                logger.info(f"[SSE] 收到 end 事件，结束流: task={task_name}")
+                            if event.event_type in ("complete", "end", "break"):
+                                logger.info(
+                                    f"[SSE] 收到终止事件 {event.event_type}，结束流: task={task_name}"
+                                )
                                 return
                         except json.JSONDecodeError:
                             logger.warning(f"[SSE] JSON 解析失败: {data_str[:100]}")

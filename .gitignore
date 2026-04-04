@@ -157,3 +157,10 @@ $RECYCLE.BIN/
 *.lnk
 CLAUDE.md
 .claude/
+
+.vs/
+CharacterModels/
+GenieData/
+desktop_client/data/
+models/
+onnx_out/
