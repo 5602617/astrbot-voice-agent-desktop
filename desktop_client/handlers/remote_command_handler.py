@@ -3,12 +3,12 @@
 
 处理服务端通过 WebSocket 下发的命令，如截图等。
 """
-
 import asyncio
 import base64
 import logging
 import time
-from typing import TYPE_CHECKING, Optional, Dict, Any, Callable
+from io import BytesIO
+from typing import TYPE_CHECKING, Optional, Dict, Any, Callable, Tuple
 
 from PySide6.QtCore import QObject, Signal
 
@@ -144,8 +144,105 @@ class RemoteCommandHandler(QObject):
             "error_message": error_message,
         }
 
+    def _get_remote_screenshot_target_size(self) -> Tuple[int, int]:
+        """获取远程截图压缩目标尺寸"""
+        proactive = getattr(self._config, "proactive", None)
+
+        width = getattr(proactive, "screenshot_width", 1600) if proactive else 1600
+        height = getattr(proactive, "screenshot_height", 900) if proactive else 900
+
+        try:
+            width = int(width or 1600)
+            height = int(height or 900)
+        except Exception:
+            width, height = 1600, 900
+
+        return max(width, 640), max(height, 480)
+
+    def _resize_image_for_remote(self, image):
+        """将远程截图压缩到较合理尺寸，避免回包过大/过慢"""
+        try:
+            from PIL import Image
+
+            target_w, target_h = self._get_remote_screenshot_target_size()
+            orig_w, orig_h = image.size
+
+            if orig_w <= target_w and orig_h <= target_h:
+                return image, orig_w, orig_h
+
+            resized = image.copy()
+
+            if hasattr(Image, "Resampling"):
+                resample = Image.Resampling.LANCZOS
+            else:
+                resample = Image.LANCZOS
+
+            resized.thumbnail((target_w, target_h), resample)
+            return resized, orig_w, orig_h
+        except Exception:
+            logger.exception("远程截图压缩失败，回退原图")
+            w, h = image.size
+            return image, w, h
+
+    def _capture_remote_screenshot_sync(self, screenshot_type: str) -> Dict[str, Any]:
+        """同步执行截图、压缩、编码，放到线程里跑，避免阻塞事件循环"""
+        from ..services.screen_capture import ScreenCaptureService
+
+        save_dir = self._config.storage.image_save_path or "./temp/screenshots"
+        service = ScreenCaptureService(save_dir=save_dir)
+
+        capture_started = time.perf_counter()
+
+        if screenshot_type == "full":
+            image = service.capture_full_screen()
+        else:
+            # 远程区域截图仍然回退成全屏
+            image = service.capture_full_screen()
+
+        capture_cost = time.perf_counter() - capture_started
+
+        if image is None:
+            return self._build_screenshot_error_result("截图失败：无法捕获屏幕")
+
+        resized_image, orig_w, orig_h = self._resize_image_for_remote(image)
+        final_w, final_h = resized_image.size
+
+        encode_started = time.perf_counter()
+        image_bytes = service.capture_to_bytes(resized_image)
+        encode_cost = time.perf_counter() - encode_started
+
+        if image_bytes is None:
+            return self._build_screenshot_error_result("截图失败：无法编码图片")
+
+        base64_started = time.perf_counter()
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        base64_cost = time.perf_counter() - base64_started
+
+        logger.info(
+            "远程截图完成: original=%sx%s final=%sx%s png_bytes=%s base64_len=%s "
+            "capture=%.3fs encode=%.3fs b64=%.3fs",
+            orig_w,
+            orig_h,
+            final_w,
+            final_h,
+            len(image_bytes),
+            len(image_base64),
+            capture_cost,
+            encode_cost,
+            base64_cost,
+        )
+
+        result = self._build_screenshot_success_result(
+            image_base64=image_base64,
+            width=final_w,
+            height=final_h,
+        )
+        result["original_width"] = orig_w
+        result["original_height"] = orig_h
+        return result
+
     async def _handle_screenshot_command(
-            self, request_id: str, params: dict
+        self, request_id: str, params: dict
     ) -> Dict[str, Any]:
         """
         处理截图命令
@@ -160,64 +257,35 @@ class RemoteCommandHandler(QObject):
         """
         screenshot_type = params.get("type", "full")
 
-        logger.info(f"执行远程截图: type={screenshot_type}, request_id={request_id}")
+        logger.info("执行远程截图: type=%s, request_id=%s", screenshot_type, request_id)
 
-        # 报告忙碌状态，通知服务端延长超时（截图+编码+传输预计需要30-60秒）
         await self._set_busy_state(True, "screenshot", 60)
 
         try:
-            # 导入截图服务
-            from ..services.screen_capture import ScreenCaptureService
-
-            # 隐藏悬浮球窗口（避免截到自己）
+            # 隐藏悬浮球，避免截进去
             if self._floating_ball:
                 self._floating_ball.hide()
 
-            # 等待窗口隐藏
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.2)
 
-            # 执行截图
-            save_dir = self._config.storage.image_save_path or "./temp/screenshots"
-            service = ScreenCaptureService(save_dir=save_dir)
+            started = time.perf_counter()
 
-            if screenshot_type == "full":
-                image = service.capture_full_screen()
-            else:
-                # 区域截图暂不支持远程触发（需要用户交互）
-                image = service.capture_full_screen()
+            # 放到线程里执行，避免主事件循环长时间阻塞
+            result = await asyncio.to_thread(
+                self._capture_remote_screenshot_sync,
+                screenshot_type,
+            )
 
-            # 恢复窗口
-            if self._floating_ball:
-                self._floating_ball.show()
-
-            if image is None:
-                return self._build_screenshot_error_result("截图失败：无法捕获屏幕")
-
-            # 将图片转换为 base64
-            image_bytes = service.capture_to_bytes(image)
-
-            if image_bytes is None:
-                return self._build_screenshot_error_result("截图失败：无法编码图片")
-
-            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+            total_cost = time.perf_counter() - started
 
             logger.info(
-                f"远程截图成功: size={len(image_bytes)} bytes, "
-                f"resolution={image.width}x{image.height}"
-            )
-            logger.info(
-                "截图结果已按原版协议封装: success=%s has_image=%s width=%s height=%s",
-                True,
-                bool(image_base64),
-                image.width,
-                image.height,
+                "远程截图命令结束: request_id=%s success=%s total=%.3fs",
+                request_id,
+                result.get("success", False),
+                total_cost,
             )
 
-            return self._build_screenshot_success_result(
-                image_base64=image_base64,
-                width=image.width,
-                height=image.height,
-            )
+            return result
 
         except ImportError as e:
             error_msg = f"截图服务不可用: {str(e)}"
@@ -228,11 +296,9 @@ class RemoteCommandHandler(QObject):
             logger.error(error_msg, exc_info=True)
             return self._build_screenshot_error_result(error_msg)
         finally:
-            # 确保窗口恢复
             if self._floating_ball:
                 self._floating_ball.show()
 
-            # 退出忙碌状态
             await self._set_busy_state(False, "screenshot")
 
     def register_command(self, command: str, handler: Callable) -> None:

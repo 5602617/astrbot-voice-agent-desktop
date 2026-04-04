@@ -27,7 +27,12 @@ from qasync import QEventLoop, asyncSlot
 from .config import ClientConfig, load_config, save_config
 from .bridge import MessageBridge, InputMessage
 from .services.proactive_dialog import ProactiveDialogService
-from .services import get_chat_history_manager, UpdateService
+from .services import (
+    get_chat_history_manager,
+    UpdateService,
+    DesktopMonitorService,
+    ScreenCaptureService,
+)
 from .services.audio_recorder import AudioRecorderService, AudioRecorderError
 from .handlers import (
     MessageHandler,
@@ -90,6 +95,7 @@ class DesktopClientApp(QObject):
 
         # 更新服务
         self._update_service = None
+        self._desktop_monitor: Optional[DesktopMonitorService] = None
         self._audio_recorder = AudioRecorderService()
         self._asr_recording = False
         self._space_recording_active = False
@@ -251,6 +257,8 @@ class DesktopClientApp(QObject):
         await self._plugin_manager.start()
         if self._plugin_manager.get_plugin("local_voice_bridge"):
             await self._plugin_manager.enable_plugin("local_voice_bridge")
+        if self._plugin_manager.get_plugin("sts_game_launcher"):
+            await self._plugin_manager.enable_plugin("sts_game_launcher")
 
         if self.config.server.auto_reconnect:
             # 计算总启动延迟
@@ -326,9 +334,12 @@ class DesktopClientApp(QObject):
             def on_connection_state(state: str):
                 """连接状态变化回调"""
                 logger.debug(f"WebSocket 连接状态变化: {state}")
+
                 if state == "connected":
-                    # 连接成功后，异步发送配置同步消息
                     asyncio.ensure_future(self._sync_config_to_server())
+                    asyncio.ensure_future(self._start_desktop_monitoring(report_now=True))
+                elif state in ("disconnected", "reconnecting"):
+                    asyncio.ensure_future(self._stop_desktop_monitoring())
 
             # 启动 WebSocket 客户端，同时传入消息和命令处理回调
             # 注意：优先使用自定义 ws_url，否则使用 ws_port 连接
@@ -365,6 +376,64 @@ class DesktopClientApp(QObject):
             asyncio.get_running_loop().call_later(
                 5, lambda: asyncio.ensure_future(self._start_websocket_connection())
             )
+
+    def _ensure_desktop_monitor(self) -> DesktopMonitorService:
+        """确保桌面状态监控服务已初始化"""
+        if self._desktop_monitor:
+            return self._desktop_monitor
+
+        save_dir = str(self.config.storage.resolved_image_save_path)
+        screen_capture = ScreenCaptureService(save_dir=save_dir)
+
+        self._desktop_monitor = DesktopMonitorService(
+            screen_capture_service=screen_capture,
+            report_interval=60,  # 先固定 60 秒，和服务端默认预期一致
+            screenshot_enabled=True,
+            screenshot_width=getattr(self.config.proactive, "screenshot_width", 800),
+            screenshot_height=getattr(self.config.proactive, "screenshot_height", 600),
+            on_state_captured=self._report_desktop_state,
+        )
+
+        logger.info("桌面状态监控服务已初始化")
+        return self._desktop_monitor
+
+    async def _report_desktop_state(self, state):
+        """将桌面状态通过 WebSocket 上报到服务端"""
+        try:
+            ws_client = self._bridge.api_client.ws_client
+            if not ws_client or not ws_client.is_connected:
+                logger.debug("跳过桌面状态上报：WebSocket 未连接")
+                return
+
+            await ws_client.send_desktop_state(state.to_dict())
+            logger.debug(
+                "桌面状态已上报: window=%s process=%s",
+                state.active_window_title,
+                state.active_window_process,
+            )
+        except Exception as e:
+            logger.warning(f"上报桌面状态失败: {e}", exc_info=True)
+
+    async def _start_desktop_monitoring(self, report_now: bool = False):
+        """启动桌面状态监控"""
+        monitor = self._ensure_desktop_monitor()
+
+        if not monitor.is_monitoring:
+            await monitor.start()
+            logger.info("桌面状态监控已启动")
+
+        if report_now:
+            try:
+                await monitor.capture_and_report()
+                logger.info("已立即上报一次桌面状态")
+            except Exception as e:
+                logger.warning(f"首次上报桌面状态失败: {e}", exc_info=True)
+
+    async def _stop_desktop_monitoring(self):
+        """停止桌面状态监控"""
+        if self._desktop_monitor and self._desktop_monitor.is_monitoring:
+            await self._desktop_monitor.stop()
+            logger.info("桌面状态监控已停止")
 
     async def _sync_config_to_server(self):
         """同步客户端配置到服务端
@@ -1204,6 +1273,11 @@ class DesktopClientApp(QObject):
             await self._plugin_manager.stop()
         except Exception:
             logger.exception("停止插件管理器失败")
+
+        try:
+            await self._stop_desktop_monitoring()
+        except Exception:
+            logger.exception("停止桌面状态监控失败")
 
         try:
             await self._bridge.disconnect_server()

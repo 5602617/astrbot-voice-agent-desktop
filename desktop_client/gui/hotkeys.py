@@ -363,14 +363,6 @@ class HotkeyManager(QObject):
 
             self._asr_pressed_keys.add(key_token)
 
-            logger.debug(
-                "[HotkeyManager] ASR on_press: key=%s before=%s after=%s required=%s combo_down=%s",
-                key_token,
-                sorted(before_pressed),
-                sorted(self._asr_pressed_keys),
-                sorted(self._asr_required_keys),
-                before_combo_down,
-            )
 
             combo_now = self._asr_required_keys.issubset(self._asr_pressed_keys)
 
@@ -394,14 +386,6 @@ class HotkeyManager(QObject):
 
             self._asr_pressed_keys.discard(key_token)
 
-            logger.debug(
-                "[HotkeyManager] ASR on_release: key=%s before=%s after=%s required=%s combo_down=%s",
-                key_token,
-                sorted(before_pressed),
-                sorted(self._asr_pressed_keys),
-                sorted(self._asr_required_keys),
-                before_combo_down,
-            )
 
             combo_now = self._asr_required_keys.issubset(self._asr_pressed_keys)
 
