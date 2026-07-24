@@ -119,4 +119,4 @@ notice and license terms are retained in this repository.
 This repository is not an official release of the original project and is not
 affiliated with or endorsed by the original author.
 
-本仓库主要记录和维护个人在原版基础上完成的功能重构。原项目版权与许可信息请参阅根目录中的 `LICENSE` 和 `NOTICE.md`。
+本仓库主要记录和维护个人在原版基础上完成的功能重构。原项目版权与许可信息请参阅根目录中的 `LICENSE` 。
