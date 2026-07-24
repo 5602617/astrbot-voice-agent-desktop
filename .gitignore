@@ -164,3 +164,7 @@ GenieData/
 desktop_client/data/
 models/
 onnx_out/
+
+# Local plugin runtime state
+desktop_client/plugins/configs/_enabled_plugins.json
+
