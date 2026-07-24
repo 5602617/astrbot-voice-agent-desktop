@@ -1,373 +1,122 @@
-# 🎈 AstrBot 桌面助手 —— 你的桌面 AI 陪伴
+# AstrBot Voice Agent Desktop
 
-<div align="center">
+这是一个基于 `muyouzhi6/Astrbot-desktop-assistant` 进行独立功能重构的桌面端项目。
 
-[![CI](https://github.com/muyouzhi6/Astrbot-desktop-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/muyouzhi6/Astrbot-desktop-assistant/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
-[![PySide6](https://img.shields.io/badge/PySide6-6.5%2B-green)](https://wiki.qt.io/Qt_for_Python)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
-
-**一个安静陪伴你的桌面悬浮球，随时可聊、随时可见**
-
-[⚡ 快速安装](#-快速安装) · [✨ 核心功能](#-核心功能) · [🔌 附加能力](#-附加能力qq-远程功能) · [🍎 平台说明](#-平台特别说明)
-
-</div>
+本次重构并非对原项目功能进行重新介绍，而是针对实际使用中出现的语音交互、后台热键和截图云端通信问题进行修复与扩展，使桌面端能够更稳定地作为 AstrBot 的本地语音交互入口运行。
 
 ---
 
-## 🌈 为什么选择桌面助手？
+## 重构背景
 
-想象一下，有一个 AI 伙伴：
+原版桌面端已经具备基本的文本交互、桌面窗口和截图能力，但在进一步扩展本地语音 Agent 工作流时，存在以下问题：
 
-- 🎈 **随时可见** —— 一个小巧的悬浮球，安静地待在你的桌面角落
-- 💬 **随时可聊** —— 点一下就能对话，不需要打开任何网页或 App
-- 👀 **能看懂你的屏幕** —— 遇到报错？让它帮你分析，不用复制粘贴
-- 🤗 **主动关心你** —— 发现你长时间工作，会温柔提醒你休息
+1. 缺少完整的本地语音输入与语音回复链路。
+2. 应用进入后台、窗口失去焦点或缩入托盘后，录音热键可能无法正常触发。
+3. 截图虽然可以在本地生成，但在通过 WebSocket 与云端 AstrBot 通信时，可能出现请求超时、结果未返回、重复处理或发送阻塞等问题。
 
-这不只是一个工具，而是一个**陪伴**。
-
----
-
-## 🎈 悬浮球：你的桌面 AI 伙伴
-
-<div align="center">
-
-```
-     ╭──────────────────────────────────╮
-     │                                  │
-     │    🟢  ← 悬浮球：你的 AI 伙伴     │
-     │                                  │
-     │    点击即可对话                   │
-     │    它能看懂你的屏幕               │
-     │    它会主动关心你                 │
-     │                                  │
-     ╰──────────────────────────────────╯
-```
-
-</div>
-
-### 悬浮球的独特之处
-
-| 特点 | 传统 AI 聊天 | 桌面悬浮球 |
-|------|-------------|-----------|
-| **存在感** | 需要打开网页/App | 始终在桌面陪伴你 |
-| **交互方式** | 主动去找它 | 它就在那里，点一下即可 |
-| **屏幕理解** | 需要复制粘贴 | 直接"看懂"你的屏幕 |
-| **主动性** | 只会被动回答 | 会主动关心你的状态 |
-| **情感连接** | 冷冰冰的工具 | 温暖的陪伴感 |
+本项目围绕以上问题进行独立重构。
 
 ---
 
-## ✨ 核心功能
+## 1. 本地语音交互流程重构
 
-### 💬 随时对话
+新增了一套可配置的本地语音交互流程，使桌面端能够完成以下闭环：
 
-点击悬浮球，打开对话窗口，和你的 AI 伙伴聊天。
-
-```
-你：今天有点累...
-AI：我注意到你已经连续工作了 3 个小时了呢，要不要站起来活动一下？
-    我可以帮你设置一个 10 分钟后的提醒 ☕
-```
-
-**沉浸式对话体验**：
-- 📝 完整 Markdown 渲染（代码高亮、公式、表格）
-- 🖼️ 图片/文件拖拽发送
-- 🔊 语音消息自动播放
-- ⌨️ 快捷键发送（Enter/Shift+Enter）
-
-### 👀 屏幕感知
-
-AI 能"看到"你屏幕上的内容，帮你分析问题。
-
-```
-（你遇到一个代码报错）
-你：帮我看看这个报错
-AI：我看到了，这是一个 NullPointerException。
-    问题出在第 42 行，userService 没有被正确初始化。
-    你可以在调用前加上空值检查，或者检查依赖注入配置...
+```text
+用户录音
+→ 本地或外部 ASR 识别
+→ 将识别文本发送至 AstrBot
+→ 接收 AstrBot 流式文本回复
+→ 调用本地或外部 TTS
+→ 播放语音回复
 ```
 
-### 🤗 主动交互
+本次重构重点包括：
 
-AI 会根据屏幕内容，在合适的时机主动给你建议。
+- 增加麦克风录音、停止录音和音频提交流程。
+- 支持本地运行时和 HTTP 服务两类 ASR/TTS 接入方式。
+- 支持将 ASR 识别结果复用原有文本消息链路发送至 AstrBot。
+- 支持接收 AstrBot 的流式回复，并在回复完成后触发语音合成。
+- 增加新输入打断上一轮语音播放的控制逻辑。
+- 将语音处理失败与文本对话隔离，避免 ASR 或 TTS 异常影响正常文本回复。
+- 增加 GPT-SoVITS、Genie TTS 和自定义语音服务的配置能力。
 
-```
-（你在浏览技术文章）
-AI：这篇关于 Rust 异步编程的文章不错！
-    需要我帮你总结一下关键点吗？
-
-（你长时间盯着代码发呆）
-AI：看起来遇到了难题？要不要说说你的思路，
-    我帮你梳理一下？
-```
-
-### 🚀 持续进化
-
-悬浮球是一个可扩展的能力平台，支持插件扩展：
-
-- 🔌 插件系统支持自定义扩展
-- 🎨 主题自适应（亮色/暗色自动切换）
-- ⚡ 全局热键快速唤起
-- 🖥️ 系统托盘后台常驻
+这部分重构的目标不是替换原有文本交互，而是在文本链路之上增加可独立启用的本地语音能力。
 
 ---
 
-## ⚡ 快速安装
+## 2. 后台全局热键失效问题修复
 
-### 前置条件
+原版热键流程在应用窗口失去焦点、隐藏到后台或进入托盘运行后，可能出现录音快捷键无法继续触发的问题。
 
-- ✅ AstrBot 服务端已部署并运行
-- ✅ 已安装服务端插件 [astrbot_plugin_desktop_assistant](https://github.com/muyouzhi6/astrbot_plugin_desktop_assistant)
+本次重构针对热键生命周期和录音状态进行了调整：
 
-### 🌟 方式一：一键安装（推荐）
+- 将录音热键从依赖窗口焦点的触发方式调整为全局热键处理。
+- 统一热键注册、重新注册和释放流程。
+- 修复设置变更后旧热键未正确注销的问题。
+- 修复应用进入后台后热键回调无法继续传递的问题。
+- 将“开始录音”和“停止录音”整合为统一的状态切换流程。
+- 增加热键冲突和注册失败时的日志与回退处理。
+- 避免重复触发导致多次录音任务并行运行。
 
-> 🚀 自动检测最快的下载源、安装依赖、配置开机自启、创建桌面快捷方式
-
-**Windows 用户**：
-
-打开 **PowerShell**（Win + X，选择 Windows Terminal），运行：
-
-```powershell
-irm "https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.bat" -OutFile "$env:TEMP\quick_install.bat"; Start-Process "$env:TEMP\quick_install.bat"
-```
-
-💡 也可以 [下载 quick_install.bat](https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.bat)，双击运行。
-
-**macOS / Linux 用户**：
-
-打开终端，运行：
-
-```bash
-curl -fsSL https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.sh | bash
-```
-
-💡 也可以 [下载 quick_install.sh](https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.sh)，然后运行 `chmod +x quick_install.sh && ./quick_install.sh`。
-
-### 方式二：克隆后安装
-
-```bash
-# 克隆项目
-git clone https://github.com/muyouzhi6/Astrbot-desktop-assistant.git
-cd Astrbot-desktop-assistant
-
-# Windows：双击 install.bat
-# macOS/Linux：chmod +x install.sh && ./install.sh
-```
-
-### 方式三：手动安装
-
-```bash
-git clone https://github.com/muyouzhi6/Astrbot-desktop-assistant.git
-cd Astrbot-desktop-assistant
-
-# 创建虚拟环境（推荐）
-python3 -m venv venv
-source venv/bin/activate  # Linux/macOS
-# 或 venv\Scripts\activate  # Windows
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 启动
-python -m desktop_client
-```
-
-### 连接服务端
-
-首次启动后：
-
-1. 右键悬浮球 → 选择「设置」
-2. 填写服务器地址：
-   - 本地部署：`http://127.0.0.1:6185`
-   - 远程服务器：`http://你的服务器IP:6185`
-3. 填写用户名密码（AstrBot 管理员账号）
-4. 保存设置
-
-点击悬浮球，说一声"你好"，你的桌面 AI 伙伴已经准备好了 🎉
+修复后，桌面端即使没有处于前台焦点状态，也可以通过配置的全局热键开始或结束语音输入。
 
 ---
 
-## 🔌 附加能力：QQ 远程功能
+## 3. 截图与云端通信问题修复
 
-> 🎁 **锦上添花**：如果你已经在用 AstrBot + NapCat，还可以解锁 QQ 远程能力
+原版截图问题并不只发生在图像捕获阶段。部分情况下，本地截图已经成功生成，但截图结果无法稳定地通过 WebSocket 返回到云端 AstrBot。
 
-除了桌面陪伴，你还可以通过 QQ 远程控制和查看电脑：
+本次重构对截图请求到结果回传的完整链路进行了修复：
 
-### 远程截图
-
-在 QQ 上发送命令，获取电脑实时画面：
-
-| 命令 | 功能 |
-|------|------|
-| `.截图` 或 `.screenshot` | 截取桌面屏幕并返回图片 |
-| `.桌面状态` | 查看桌面客户端连接状态 |
-
-### 使用场景
-
-- 出门在外，想看看电脑上的下载进度
-- 在 QQ 群里让 bot 帮你分析屏幕上的报错
-- 远程查看家里电脑的状态
-
-```
-你（在 QQ 上）：.截图
-Bot：[返回你电脑的实时截图]
-
-你：帮我看看这个报错是什么问题
-Bot：根据截图，你的代码第 42 行有个 NullPointerException...
+```text
+云端发起截图请求
+→ 桌面端接收远程命令
+→ 执行全屏或区域截图
+→ 编码截图结果
+→ 携带请求标识返回云端
+→ 云端确认并继续处理
 ```
 
-### 远程功能配置
+主要修复内容包括：
 
-需要正确配置 WebSocket 连接：
+- 修复截图命令在 WebSocket 通道中的请求与响应匹配问题。
+- 增加截图请求标识，避免云端无法判断结果对应哪一次请求。
+- 修复大体积截图数据发送时可能造成的 WebSocket 阻塞。
+- 调整截图结果和普通消息共用连接时的发送顺序。
+- 增加超时处理，避免截图任务长期占用连接。
+- 增加重复请求保护，避免同一命令被多次执行。
+- 修复断线重连后旧截图任务继续占用发送流程的问题。
+- 改进截图失败时的错误结果回传，使云端能够区分截图失败与通信超时。
 
-1. 确保服务端插件已启用
-2. 在客户端设置中配置 WebSocket 端口（默认 6190）
-3. 开放服务器防火墙端口 6190
-
-```bash
-# Linux (firewalld)
-sudo firewall-cmd --add-port=6190/tcp --permanent
-sudo firewall-cmd --reload
-
-# Linux (ufw)
-sudo ufw allow 6190/tcp
-```
-
-详细配置请参阅 [服务端插件文档](https://github.com/muyouzhi6/astrbot_plugin_desktop_assistant#-附加能力qq-远程功能)。
+这部分重构重点解决的是“截图已生成但云端收不到”的端到端通信问题，而不仅是本地截图功能本身。
 
 ---
 
-## 🍎 平台特别说明
+## 重构结果
 
-### macOS
+经过本次重构，桌面端形成了以下新的工作方式：
 
-**系统要求**：macOS 10.14+ / Python 3.10+
+- 可以通过后台全局热键启动和停止语音输入。
+- 可以将本地 ASR 结果发送至 AstrBot，并接收流式文本回复。
+- 可以将 AstrBot 回复交给本地或外部 TTS 服务播放。
+- 语音模块异常时不会中断原有文本聊天。
+- 截图请求可以通过 WebSocket 完成请求、执行、回传和异常反馈。
+- 热键、语音任务和截图任务具备更清晰的状态与生命周期管理。
 
-**悬浮球置顶**：自动安装 `pyobjc-framework-Cocoa` 实现窗口置顶。
-
-**常见问题**：
-
-| 问题 | 解决方案 |
-|------|----------|
-| 启动脚本双击无反应 | `chmod +x start.command` |
-| 依赖安装失败 | `xcode-select --install` |
-
-### Linux
-
-**系统依赖**：
-
-```bash
-# Ubuntu/Debian
-sudo apt install libgl1-mesa-glx libxcb-xinerama0 libxcb-cursor0 libegl1
-
-# Fedora
-sudo dnf install mesa-libGL libxcb
-```
-
-**Wayland 支持**：启动脚本自动设置 `QT_QPA_PLATFORM=wayland;xcb`。
-
-### Windows
-
-开箱即用，无特殊依赖。
+当前版本仍属于个人重构版本，后续将继续整理 AstrBot 接入方式、配置结构和开源文档。
 
 ---
 
-## ⚙️ 开机自启配置
+## 项目来源与维护说明
 
-### 自动配置（推荐）
+This project is an independently maintained derivative of
+[`muyouzhi6/Astrbot-desktop-assistant`](https://github.com/muyouzhi6/Astrbot-desktop-assistant).
 
-使用一键安装脚本时会提示配置开机自启。
+The original project is licensed under the MIT License. The original copyright
+notice and license terms are retained in this repository.
 
-### 手动配置
+This repository is not an official release of the original project and is not
+affiliated with or endorsed by the original author.
 
-1. 右键悬浮球或系统托盘 → 选择「设置」
-2. 在「通用设置」中勾选「开机自启动」
-3. 保存设置
-
-### 故障排查
-
-| 平台 | 检查方法 |
-|------|----------|
-| Windows | 注册表 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` |
-| macOS | `launchctl list \| grep astrbot` |
-| Linux | `~/.config/autostart/astrbot-desktop-assistant.desktop` |
-
----
-
-## 📦 目录结构
-
-```
-desktop_client/
-├── gui/          # 界面组件（悬浮球、聊天窗口、设置）
-├── handlers/     # 消息处理器（消息、截图、主动对话）
-├── platforms/    # 平台适配器（Windows/macOS/Linux）
-├── services/     # 核心服务（API通信、截图、桌面监控）
-├── plugins/      # 插件系统
-├── config.py     # 配置管理
-├── bridge.py     # 消息桥接层
-└── main.py       # 程序入口
-```
-
-详细架构说明请参阅 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-
----
-
-## 🤝 参与贡献
-
-我们欢迎任何形式的贡献！
-
-```bash
-# Fork 并克隆项目
-git clone https://github.com/YOUR_USERNAME/Astrbot-desktop-assistant.git
-cd Astrbot-desktop-assistant
-
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-
-# 安装依赖并运行测试
-pip install -r requirements.txt
-pytest
-```
-
-| 资源 | 说明 |
-|------|------|
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构文档 |
-| [Issue 模板](.github/ISSUE_TEMPLATE/) | 报告 Bug / 功能请求 |
-
----
-
-## 🔗 相关链接
-
-| 资源 | 链接 |
-|------|------|
-| 🔌 服务端插件 | [astrbot_plugin_desktop_assistant](https://github.com/muyouzhi6/astrbot_plugin_desktop_assistant) |
-| 🔊 TTS 语音插件 | [astrbot_plugin_tts_emotion_router](https://github.com/muyouzhi6/astrbot_plugin_tts_emotion_router) |
-| 🤖 AstrBot 主项目 | [AstrBot](https://github.com/Soulter/AstrBot) |
-
----
-
-## 📄 许可证
-
-MIT License
-
----
-
-<div align="center">
-
-**不只是工具，而是陪伴**
-
-*桌面悬浮球 —— 让 AI 真正成为你的伙伴*
-
-[报告问题](https://github.com/muyouzhi6/Astrbot-desktop-assistant/issues) · [参与讨论](https://github.com/muyouzhi6/Astrbot-desktop-assistant/discussions) · [参与贡献](CONTRIBUTING.md)
-
-
-本插件开发QQ群：215532038
-
-<img width="1284" height="2289" alt="qrcode_1767584668806" src="https://github.com/user-attachments/assets/113ccf60-044a-47f3-ac8f-432ae05f89ee" />
-
-
-
-</div>
+本仓库主要记录和维护个人在原版基础上完成的功能重构。原项目版权与许可信息请参阅根目录中的 `LICENSE` 和 `NOTICE.md`。

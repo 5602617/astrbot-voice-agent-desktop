@@ -112,7 +112,7 @@ onnx_out/
   - 仅 ONNX 模式下填写，例如 `D:\models\myvoice\onnx_out`
 
 - **GENIE_DATA_DIR(可选)**
-  - 填 GenieData 目录，例如 `D:\Astrbot-desktop-assistant\GenieData`
+  - 填 GenieData 目录，例如 `<project_root>\GenieData`
 
 ---
 
